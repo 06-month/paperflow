@@ -1,0 +1,19 @@
+.pt-panel-root { padding: 0; background: var(--material-background, #fff); }
+.pt-toolbar { padding: 10px 12px; border-bottom: 1px solid #ddd; gap: 6px; }
+.pt-title { font-size: 15px; font-weight: 700; }
+.pt-subtitle { font-size: 11px; color: #666; margin-top: 2px; }
+.pt-scroll { overflow: auto; padding: 16px 18px; line-height: 1.65; font-size: 13px; }
+.pt-section { margin-bottom: 20px; padding-bottom: 14px; border-bottom: 1px solid #eee; }
+.pt-section h2, .pt-section h3, .pt-section h4 { margin: 0 0 8px 0; }
+.pt-summary { background: #f0f6ff; border-left: 3px solid #4a90e2; padding: 8px 10px; margin: 8px 0 10px; }
+.pt-translation { white-space: pre-wrap; }
+.pt-chat-box { padding: 0; }
+.pt-chat-log { overflow: auto; padding: 14px; min-height: 0; flex: 1; }
+.pt-msg { padding: 9px 11px; margin: 7px 0; border-radius: 8px; white-space: pre-wrap; line-height: 1.55; font-size: 13px; }
+.pt-system { background: #f4f4f4; color: #555; }
+.pt-user { background: #e8f0fe; margin-left: 24px; }
+.pt-assistant { background: #f6f8fa; margin-right: 24px; }
+.pt-error { background: #fff0f0; color: #b00020; }
+.pt-chat-input-row { padding: 10px; border-top: 1px solid #ddd; gap: 8px; }
+.pt-chat-input { flex: 1; min-height: 58px; resize: vertical; font-size: 13px; padding: 7px; }
+.pt-meta-view { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }

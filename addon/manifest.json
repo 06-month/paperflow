@@ -1,0 +1,19 @@
+{
+  "manifest_version": 2,
+  "name": "PaperFlow",
+  "version": "0.2.2",
+  "description": "PDF 논문 번역 + 요약 플러그인 (Gemini 3.1 Flash-Lite)",
+  "author": "06-month",
+  "icons": {
+    "48": "content/icons/icon.png",
+    "96": "content/icons/icon@2x.png"
+  },
+  "applications": {
+    "zotero": {
+      "id": "paper-translator@06-month",
+      "strict_min_version": "7.0",
+      "strict_max_version": "9.99.99",
+      "update_url": "https://example.com/paperflow/updates.json"
+    }
+  }
+}

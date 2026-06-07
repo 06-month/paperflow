@@ -1,0 +1,74 @@
+<vbox xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+      xmlns:html="http://www.w3.org/1999/xhtml"
+      onload="PTPrefsUI.init()">
+
+  <groupbox>
+    <label><html:h2 style="margin:0 0 4px 0;font-size:14px;">API 설정</html:h2></label>
+
+    <hbox align="center" style="margin-top:8px;">
+      <label value="Gemini API 키" style="min-width:120px;font-weight:600;"/>
+      <html:input id="pt-api-key" type="password" placeholder="AIza..."
+        style="flex:1;padding:5px 8px;border:1px solid var(--fill-quinary);border-radius:4px;font-size:13px;font-family:monospace;"/>
+      <button id="pt-toggle-btn" label="표시" oncommand="PTPrefsUI.toggleVisibility()" style="margin-left:6px;"/>
+    </hbox>
+
+    <hbox align="center" style="margin-top:6px;">
+      <label value="" style="min-width:120px;"/>
+      <label id="pt-api-status" value="" style="font-size:11px;flex:1;"/>
+      <button label="연결 테스트" oncommand="PTPrefsUI.testApi()" style="margin-left:6px;"/>
+      <button label="저장" oncommand="PTPrefsUI.saveApiKey()" style="margin-left:4px;"/>
+    </hbox>
+
+    <html:p style="font-size:11px;color:var(--fill-secondary);margin:6px 0 0 0;">
+      무료 발급:
+      <html:a href="https://aistudio.google.com/app/apikey" onclick="PTPrefsUI.openLink(event)">
+        aistudio.google.com
+      </html:a>
+      — Gemini 3.1 Flash-Lite 무료 티어 RPM 15 / 일 1,500 req
+    </html:p>
+  </groupbox>
+
+  <groupbox style="margin-top:8px;">
+    <label><html:h2 style="margin:0 0 4px 0;font-size:14px;">번역 설정</html:h2></label>
+
+    <hbox align="center" style="margin-top:8px;">
+      <checkbox id="pt-skip-refs"
+        label="References 섹션 번역 제외 (권장 — 토큰 절약)"
+        oncommand="PTPrefsUI.save('skipReferences', this.checked)"/>
+    </hbox>
+
+    <hbox align="center" style="margin-top:6px;">
+      <label value="섹션 요약 줄 수" style="min-width:140px;font-weight:600;"/>
+      <menulist id="pt-summary-lines" oncommand="PTPrefsUI.save('summaryLines', parseInt(this.value,10))"
+        style="min-width:80px;">
+        <menupopup>
+          <menuitem label="2줄" value="2"/>
+          <menuitem label="3줄" value="3"/>
+          <menuitem label="4줄" value="4"/>
+          <menuitem label="5줄" value="5"/>
+        </menupopup>
+      </menulist>
+    </hbox>
+
+    <hbox align="center" style="margin-top:6px;">
+      <checkbox id="pt-auto-translate"
+        label="PDF 추가 시 자동 번역 (현재 비활성 — 수동 실행 권장)"
+        disabled="true"
+        oncommand="PTPrefsUI.save('autoTranslate', this.checked)"/>
+    </hbox>
+  </groupbox>
+
+  <groupbox style="margin-top:8px;">
+    <label><html:h2 style="margin:0 0 4px 0;font-size:14px;">사용 방법</html:h2></label>
+    <html:ol style="font-size:12px;color:var(--fill-secondary);margin:4px 0 0 16px;line-height:1.8;">
+      <html:li>번역할 논문을 Zotero 라이브러리에서 선택</html:li>
+      <html:li>Tools → Translate Paper 클릭</html:li>
+      <html:li>번역 완료 후 논문 하위에 Note + translated.ko.html 생성됨</html:li>
+    </html:ol>
+    <html:p style="font-size:11px;color:var(--fill-secondary);margin:8px 0 0 0;">
+      v0.2.0 — Phase 1~11 포함<html:br/>
+      Tools → Open Paper Translator Panel에서 번역본 패널/채팅 사용
+    </html:p>
+  </groupbox>
+
+</vbox>
