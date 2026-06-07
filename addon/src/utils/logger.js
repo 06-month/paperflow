@@ -1,7 +1,7 @@
 "use strict";
 
 var PTLogger = {
-  _prefix: "[PaperTranslator]",
+  _prefix: "[PaperFlow]",
   info(msg)  { Zotero.debug(`${this._prefix} ${msg}`); },
   warn(msg)  { Zotero.debug(`${this._prefix} WARN: ${msg}`); },
   error(msg) {

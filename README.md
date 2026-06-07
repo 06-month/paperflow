@@ -1,64 +1,86 @@
 # PaperFlow
 
-PaperFlow is a Zotero plugin MVP for translating PDF papers into Korean, storing a summary note, a translated HTML attachment, metadata JSON, and opening a simple translation/chat panel.
+PaperFlow is a Zotero plugin for translating academic papers and reading the translated result inside Zotero. The current target is an installable and testable MVP for Zotero 9.0.3.
 
-## Repository layout
+## Features
+
+1. Select a Zotero item or PDF attachment.
+2. Run Tools -> Translate Paper.
+3. Extract text from the selected PDF.
+4. Split extracted text into sections and translation chunks.
+5. Translate chunks into Korean with Gemini.
+6. Create a Zotero Note summary.
+7. Create a `translated.ko.html` attachment with the full Korean translation.
+8. Create a `pt-meta.json` attachment with job, chunk, hash, timestamp, and attachment metadata.
+9. Run Tools -> Open PaperFlow Panel to view translation, chat, and metadata tabs.
+
+## Repository Layout
 
 ```text
 paperflow/
 ├─ addon/              # Zotero plugin source. The XPI root is this directory.
-├─ scripts/build.sh    # Builds dist/paperflow.xpi from addon/.
-├─ dist/paperflow.xpi  # Build artifact.
-├─ updates.json        # Zotero update manifest.
-├─ AGENTS.md           # Codex/agent development instructions.
-└─ README.md
+│  ├─ manifest.json
+│  ├─ bootstrap.js
+│  ├─ content/
+│  └─ src/
+├─ scripts/
+│  └─ build.sh
+├─ dist/
+│  └─ paperflow.xpi
+├─ updates.json
+├─ README.md
+├─ CHANGELOG.md
+└─ AGENTS.md
 ```
+
+## Install
+
+1. Open Zotero 9.0.3.
+2. Go to Tools -> Plugins.
+3. Choose Install Plugin From File.
+4. Select `dist/paperflow.xpi`.
+5. Restart Zotero.
 
 ## Build
 
 ```bash
+chmod +x scripts/build.sh
 ./scripts/build.sh
 ```
 
-The output is:
+The build script zips the contents of `addon/` into `dist/paperflow.xpi`, so `manifest.json` is at the archive root.
 
-```text
-dist/paperflow.xpi
-```
+## Test Workflow
 
-## Install locally
+1. Start Zotero 9.0.3.
+2. Install `dist/paperflow.xpi`.
+3. Restart Zotero.
+4. Confirm Preferences -> PaperFlow appears.
+5. Save a Gemini API key and run the connection test.
+6. Select a paper with a PDF attachment.
+7. Run Tools -> Translate Paper.
+8. Confirm `[PaperFlow]` note, `translated.ko.html`, and `pt-meta.json` are created.
+9. Run Tools -> Open PaperFlow Panel.
+10. Confirm the translation, chat, and metadata tabs load.
+11. Ask a paper-specific question in the chat tab.
+12. Check Tools -> Developer -> Error Console for errors.
 
-1. Zotero → Tools → Plugins.
-2. Gear icon → Install Plugin From File.
-3. Select `dist/paperflow.xpi`.
-4. Restart Zotero.
+## Known Limits
 
-## Test workflow
+- PaperFlow may use a separate panel window instead of a native Zotero PDF Reader sidebar.
+- Zotero 9 runtime APIs still need manual validation in the local Zotero app.
+- A Gemini API key is required for translation and chat.
 
-1. Preferences → Paper Translator / PaperFlow.
-2. Save Gemini API key and run connection test.
-3. Select a Zotero item with a PDF attachment.
-4. Tools → Translate Paper.
-5. Confirm generated child items:
-   - `[PaperTranslator] ...` note
-   - `translated.ko.html`
-   - `pt-meta.json`
-6. Select the same item.
-7. Tools → Open Paper Translator Panel.
-8. Check translation, chat, and metadata tabs.
+## Release Update URL
 
-## Release update URL
-
-The current manifest uses a placeholder update URL. For real distribution, set `addon/manifest.json`:
+`addon/manifest.json` uses:
 
 ```json
 "update_url": "https://raw.githubusercontent.com/06-month/paperflow/main/updates.json"
 ```
 
-Then ensure `updates.json` points to the release asset:
+`updates.json` points to the GitHub release asset:
 
 ```text
 https://github.com/06-month/paperflow/releases/download/v0.2.2/paperflow.xpi
 ```
-
-If your GitHub owner is not `06-month`, replace it in both files.

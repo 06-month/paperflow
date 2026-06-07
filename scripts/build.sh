@@ -14,6 +14,9 @@ cd "$ADDON_DIR"
 zip -r "$OUT" . \
   -x '*.DS_Store' \
   -x '__MACOSX/*' \
+  -x '*.log' \
+  -x 'tmp/*' \
+  -x '*.tmp' \
   -x '*.swp' \
   -x '*~'
 

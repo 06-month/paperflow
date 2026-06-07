@@ -3,7 +3,7 @@
 var PaperTranslator;
 
 function log(msg) {
-  Zotero.debug(`[PaperTranslator] ${msg}`);
+  Zotero.debug(`[PaperFlow] ${msg}`);
 }
 
 async function startup({ id, version, rootURI }) {
@@ -32,10 +32,10 @@ async function startup({ id, version, rootURI }) {
 
   // ── 설정 패널 등록 ────────────────────────────────────────────────────────
   Zotero.PreferencePanes.register({
-    pluginID: "paper-translator@06-month",
+    pluginID: "paperflow@06-month",
     src: rootURI + "content/preferences.xhtml",
     scripts: [rootURI + "content/preferences.js"],
-    label: "Paper Translator",
+    label: "PaperFlow",
     image: rootURI + "content/icons/icon.png",
   });
 

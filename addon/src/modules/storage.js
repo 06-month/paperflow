@@ -1,7 +1,8 @@
 "use strict";
 
 var PTStorage = {
-  NOTE_TAG: "[PaperTranslator]",
+  NOTE_TAG: "[PaperFlow]",
+  LEGACY_NOTE_TAG: "[PaperTranslator]",
   HTML_FILENAME: "translated.ko.html",
   META_FILENAME: "pt-meta.json",
 
@@ -114,7 +115,7 @@ var PTStorage = {
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="generator" content="PaperTranslator v0.1.0">
+<meta name="generator" content="PaperFlow v0.2.2">
 <title>${esc(title)} — 번역본</title>
 <style>
   body { font-family: -apple-system, sans-serif; max-width: 860px; margin: 40px auto; padding: 0 20px; line-height: 1.7; color: #222; }
@@ -310,7 +311,8 @@ ${sections.map(s => renderSection(s)).join("\n")}
     const noteIDs = parentItem.getNotes ? parentItem.getNotes() : [];
     for (const id of noteIDs) {
       const note = Zotero.Items.get(id);
-      if (note && (note.getNote() || "").includes(this.NOTE_TAG)) return note;
+      const noteText = note && (note.getNote() || "");
+      if (noteText.includes(this.NOTE_TAG) || noteText.includes(this.LEGACY_NOTE_TAG)) return note;
     }
     return null;
   },
@@ -319,7 +321,8 @@ ${sections.map(s => renderSection(s)).join("\n")}
     const noteIDs = parentItem.getNotes ? parentItem.getNotes() : [];
     for (const id of noteIDs) {
       const note = Zotero.Items.get(id);
-      if (note && (note.getNote() || "").includes(this.NOTE_TAG)) return note;
+      const noteText = note && (note.getNote() || "");
+      if (noteText.includes(this.NOTE_TAG) || noteText.includes(this.LEGACY_NOTE_TAG)) return note;
     }
     return null;
   },

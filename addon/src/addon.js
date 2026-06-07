@@ -97,7 +97,7 @@ class PaperTranslatorAddon {
       "menuitem"
     );
     panelItem.id = "paper-translator-panel-menuitem";
-    panelItem.setAttribute("label", "Open Paper Translator Panel");
+    panelItem.setAttribute("label", "Open PaperFlow Panel");
     panelItem.addEventListener("command", () => this.openTranslationPanel(win));
 
     toolsMenu.appendChild(separator);
@@ -115,7 +115,7 @@ class PaperTranslatorAddon {
     // 1. API 키 확인
     const apiKey = PTPrefs.getApiKey();
     if (!apiKey) {
-      this._alert(win, "API 키가 설정되지 않았습니다.\nEdit → Preferences → Paper Translator에서 설정해주세요.");
+      this._alert(win, "API 키가 설정되지 않았습니다.\nEdit → Preferences → PaperFlow에서 설정해주세요.");
       return;
     }
 
@@ -246,7 +246,7 @@ class PaperTranslatorAddon {
   _openProgressWindow(win, title) {
     // Zotero 내장 ProgressWindow 사용
     const pw = new Zotero.ProgressWindow({ closeOnClick: false });
-    pw.changeHeadline("Paper Translator");
+    pw.changeHeadline("PaperFlow");
     pw.addDescription(`"${title.slice(0, 60)}${title.length > 60 ? "..." : ""}"`);
 
     const item = new pw.ItemProgress(
@@ -274,10 +274,10 @@ class PaperTranslatorAddon {
 
   // ── 다이얼로그 헬퍼 ───────────────────────────────────────────────────────
   _alert(win, msg) {
-    Services.prompt.alert(win, "Paper Translator", msg);
+    Services.prompt.alert(win, "PaperFlow", msg);
   }
 
   _confirm(win, msg) {
-    return Services.prompt.confirm(win, "Paper Translator", msg);
+    return Services.prompt.confirm(win, "PaperFlow", msg);
   }
 }
