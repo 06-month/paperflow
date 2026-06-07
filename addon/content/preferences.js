@@ -1,6 +1,6 @@
 "use strict";
 
-var PTPrefsUI = {
+window.PTPrefsUI = {
   init() {
     const apiKey     = Zotero.Prefs.get("extensions.paper-translator.geminiApiKey") || "";
     const skipRefs   = Zotero.Prefs.get("extensions.paper-translator.skipReferences") !== false;
@@ -33,13 +33,18 @@ var PTPrefsUI = {
   },
 
   async testApi() {
+    Zotero.debug("[PaperFlow] Test connection clicked");
     this.saveApiKey();
     const key = Zotero.Prefs.get("extensions.paper-translator.geminiApiKey") || "";
-    if (!key) { this._status("API 키를 먼저 입력하세요.", "red"); return; }
+    if (!key) {
+      this._status("Gemini API key is empty", "red");
+      this._reportError("Gemini API key is empty");
+      return;
+    }
 
     this._status("확인 중...", "gray");
     try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${key}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${encodeURIComponent(key)}`;
       const r = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -49,13 +54,16 @@ var PTPrefsUI = {
         this._status("✓ 연결 성공 — Gemini 3.1 Flash-Lite 사용 가능", "green");
       } else if (r.status === 403) {
         this._status("✗ API 키가 유효하지 않습니다.", "red");
+        this._reportError(`Gemini connection test failed: HTTP ${r.status} ${await this._readErrorBody(r)}`);
       } else if (r.status === 429) {
         this._status("✓ 키 유효 (Rate limit 일시 초과)", "orange");
       } else {
         this._status(`✗ 오류 ${r.status}`, "red");
+        this._reportError(`Gemini connection test failed: HTTP ${r.status} ${await this._readErrorBody(r)}`);
       }
     } catch (e) {
       this._status(`✗ 네트워크 오류: ${e.message}`, "red");
+      this._reportError(`Gemini connection test failed: ${e.message}`);
     }
   },
 
@@ -74,5 +82,16 @@ var PTPrefsUI = {
     el.setAttribute("value", msg);
     const colors = { green: "#2da44e", red: "#cf222e", orange: "#fb8f44", gray: "#888" };
     el.setAttribute("style", `font-size:11px;color:${colors[color] || colors.gray};flex:1;`);
+  },
+
+  async _readErrorBody(response) {
+    try { return (await response.text()).slice(0, 500); }
+    catch (_) { return ""; }
+  },
+
+  _reportError(msg) {
+    const text = `[PaperFlow] ${msg}`;
+    try { Zotero.debug(text); } catch (_) {}
+    try { Components.utils.reportError(text); } catch (_) {}
   },
 };
