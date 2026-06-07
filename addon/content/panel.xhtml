@@ -1,47 +1,50 @@
 <?xml version="1.0"?>
-<window xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
-        xmlns:html="http://www.w3.org/1999/xhtml"
-        title="PaperFlow Panel"
-        width="720" height="820"
-        onload="PTPanel.init()">
-  <html:link rel="stylesheet" href="panel.css"/>
-  <script src="panel.js"/>
-  <vbox flex="1" class="pt-panel-root">
-    <hbox align="center" class="pt-toolbar">
-      <html:div class="pt-title-wrap">
-        <html:div id="pt-panel-title" class="pt-title">PaperFlow</html:div>
-        <html:div id="pt-panel-subtitle" class="pt-subtitle">번역본 로드 중...</html:div>
-      </html:div>
-      <spacer flex="1"/>
-      <button label="새로고침" oncommand="PTPanel.reload()"/>
-      <button label="HTML 열기" oncommand="PTPanel.openHTML()"/>
-    </hbox>
+<?xml-stylesheet href="panel.css" type="text/css"?>
+<window
+  xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+  xmlns:html="http://www.w3.org/1999/xhtml"
+  title="PaperFlow"
+  width="900"
+  height="720">
+  <vbox id="pt-window" flex="1">
+    <html:div id="pt-root" flex="1">
+      <html:header id="pt-header">
+        <html:div id="pt-brandrow">
+          <html:span id="pt-brand">PaperFlow</html:span>
+          <html:span id="pt-status-chip" class="pt-chip pt-chip-missing">missing</html:span>
+          <html:span id="pt-chunk-progress" class="pt-chunk"></html:span>
+        </html:div>
+        <html:h1 id="pt-paper-title">PaperFlow</html:h1>
+        <html:p id="pt-status" class="pt-status-line">Panel loaded. Initializing...</html:p>
+      </html:header>
 
-    <tabbox flex="1">
-      <tabs>
-        <tab label="번역"/>
-        <tab label="채팅"/>
-        <tab label="메타"/>
-      </tabs>
-      <tabpanels flex="1">
-        <tabpanel flex="1">
-          <html:div id="pt-translation-view" class="pt-scroll">로드 중...</html:div>
-        </tabpanel>
-        <tabpanel flex="1">
-          <vbox flex="1" class="pt-chat-box">
-            <html:div id="pt-chat-log" class="pt-chat-log">
-              <html:div class="pt-msg pt-system">번역 완료된 논문 내용 기준으로 질문할 수 있습니다.</html:div>
+      <html:nav id="pt-tabs" aria-label="PaperFlow views">
+        <html:button id="pt-tab-summary" type="button" class="pt-tab pt-tab-active">Summary</html:button>
+        <html:button id="pt-tab-translation" type="button" class="pt-tab">Translation</html:button>
+        <html:button id="pt-tab-meta" type="button" class="pt-tab">Meta</html:button>
+      </html:nav>
+
+      <html:main id="pt-content" class="pt-text-view">
+        Loading...
+      </html:main>
+
+      <html:section id="pt-chat">
+        <html:div id="pt-chat-head">Ask Gemini about this paper</html:div>
+        <html:div id="pt-chat-log">
+          <html:div class="pt-msg pt-msg-assistant">안녕하세요. 이 논문의 요약과 번역 내용을 바탕으로 답변할 수 있습니다.</html:div>
+        </html:div>
+        <html:div id="pt-chat-composer" class="pt-chat-composer">
+          <html:textarea id="pt-chat-input" placeholder="무엇이든 질문하세요."></html:textarea>
+          <html:div class="pt-composer-actions">
+            <html:div class="pt-composer-tools">
+              <html:button id="pt-chat-attach" type="button" class="pt-icon-btn"
+                title="첨부파일은 이후 버전에서 지원 예정입니다." aria-label="첨부파일은 이후 버전에서 지원 예정입니다." disabled="true">+</html:button>
             </html:div>
-            <hbox class="pt-chat-input-row">
-              <html:textarea id="pt-chat-input" class="pt-chat-input" placeholder="예: 이 논문의 핵심 기여를 섹션별로 정리해줘"></html:textarea>
-              <button label="질문" oncommand="PTPanel.ask()"/>
-            </hbox>
-          </vbox>
-        </tabpanel>
-        <tabpanel flex="1">
-          <html:pre id="pt-meta-view" class="pt-scroll pt-meta-view">로드 중...</html:pre>
-        </tabpanel>
-      </tabpanels>
-    </tabbox>
+            <html:button id="pt-chat-send" type="button" class="pt-send-btn" title="Send" aria-label="Send">↑</html:button>
+          </html:div>
+        </html:div>
+      </html:section>
+    </html:div>
   </vbox>
+  <script type="application/javascript" src="panel.js"></script>
 </window>

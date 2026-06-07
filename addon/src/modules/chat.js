@@ -38,6 +38,16 @@ var PTChat = {
 
   _buildContext(bundle) {
     const parts = [];
+    if (bundle?.noteHTML) {
+      const noteText = bundle.noteHTML
+        .replace(/<!-- PT_META:[\s\S]*?-->/g, " ")
+        .replace(/<style[\s\S]*?<\/style>/gi, " ")
+        .replace(/<script[\s\S]*?<\/script>/gi, " ")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (noteText) parts.push(`[요약 노트]\n${noteText}`);
+    }
     if (bundle?.sections?.length) {
       const walk = (secs, depth = 0) => {
         for (const sec of secs) {

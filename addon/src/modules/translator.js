@@ -19,7 +19,7 @@ var PTTranslator = {
 
     let resp;
     try {
-      resp = await fetch(`${this._apiBase}?key=${apiKey}`, {
+      resp = await fetch(`${this._apiBase}?key=${encodeURIComponent(apiKey)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(reqBody),

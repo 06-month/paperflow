@@ -112,7 +112,9 @@ var PTJobQueue = {
     }
 
     PTLogger.info(`큐 완료: ${doneCount}/${total} chunk 성공`);
-    if (this._onComplete) this._onComplete(this._jobs);
+    if (this._onComplete) {
+      await this._onComplete(this._jobs);
+    }
   },
 
   _sleep(ms) {

@@ -17,14 +17,32 @@ var PTStorage = {
 
     // 2. translated.ko.html 생성 및 저장
     const htmlContent = this._buildHTML(meta.title, sections);
-    const htmlAttachment = await this._saveHTMLAttachment(parentItem, htmlContent);
+    let htmlAttachment;
+    try {
+      htmlAttachment = await this._saveHTMLAttachment(parentItem, htmlContent);
+    } catch (e) {
+      throw this._storageError("translated.ko.html attachment 생성 실패", e);
+    }
 
     // 3. metadata JSON 저장
     const metaData = this._buildMeta(meta, jobs, htmlAttachment?.id);
-    await this._saveMetaAttachment(parentItem, metaData);
+    try {
+      const metaAttachment = await this._saveMetaAttachment(parentItem, metaData);
+      if (metaAttachment?.id && metaData.metaAttachmentId !== metaAttachment.id) {
+        metaData.metaAttachmentId = metaAttachment.id;
+        metaData.metaAttachmentID = metaAttachment.id;
+        await this._saveMetaAttachment(parentItem, metaData);
+      }
+    } catch (e) {
+      throw this._storageError("pt-meta.json attachment 생성 실패", e);
+    }
 
     // 4. Zotero Note 생성/업데이트
-    await this._saveNote(parentItem, meta.title, sections, metaData);
+    try {
+      await this._saveNote(parentItem, meta.title, sections, metaData);
+    } catch (e) {
+      throw this._storageError("[PaperFlow] Note 저장 실패", e);
+    }
 
     PTLogger.info(`저장 완료: item ${parentItem.id}`);
     return { sections, metaData };
@@ -147,27 +165,37 @@ ${sections.map(s => renderSection(s)).join("\n")}
     const existing = await this._findAttachmentByFilename(parentItem, this.HTML_FILENAME);
 
     if (existing) {
-      const path = existing.getFilePath();
+      const path = existing.getFilePath && existing.getFilePath();
       if (path) {
         await Zotero.File.putContentsAsync(path, htmlContent);
+        existing.setField("title", this.HTML_FILENAME);
         await existing.saveTx();
         PTLogger.info(`HTML attachment 업데이트: ${path}`);
         return existing;
       }
+      await this._deleteStaleAttachment(existing, this.HTML_FILENAME);
     }
 
-    // 새로 생성
-    const attachment = await Zotero.Attachments.importFromURL({
-      url: "data:text/html;charset=utf-8," + encodeURIComponent(htmlContent),
-      parentItemID: parentItem.id,
-      title: `${this.HTML_FILENAME} — 번역본`,
-      contentType: "text/html",
-      charsetID: "utf-8",
-    });
-
-    // 파일명 변경은 직접 파일 저장으로 대체
-    PTLogger.info(`HTML attachment 생성: item ${attachment?.id}`);
-    return attachment;
+    const tempPath = await this._writeTempFile(
+      parentItem,
+      "translated",
+      "html",
+      htmlContent
+    );
+    try {
+      const file = this._pathToFile(tempPath);
+      const attachment = await Zotero.Attachments.importFromFile({
+        file,
+        parentItemID: parentItem.id,
+        title: this.HTML_FILENAME,
+        contentType: "text/html",
+        charset: "utf-8",
+      });
+      PTLogger.info(`HTML attachment 생성: item ${attachment?.id}`);
+      return attachment;
+    } finally {
+      await this._removeTempFile(tempPath);
+    }
   },
 
   // ── metadata JSON attachment 저장 ─────────────────────────────────────────
@@ -179,21 +207,98 @@ ${sections.map(s => renderSection(s)).join("\n")}
       const path = existing.getFilePath && existing.getFilePath();
       if (path) {
         await Zotero.File.putContentsAsync(path, json);
+        existing.setField("title", this.META_FILENAME);
         await existing.saveTx();
         PTLogger.info(`metadata attachment 업데이트: ${path}`);
         return existing;
       }
+      await this._deleteStaleAttachment(existing, this.META_FILENAME);
     }
 
-    const attachment = await Zotero.Attachments.importFromURL({
-      url: "data:application/json;charset=utf-8," + encodeURIComponent(json),
-      parentItemID: parentItem.id,
-      title: this.META_FILENAME,
-      contentType: "application/json",
-      charsetID: "utf-8",
-    });
-    PTLogger.info(`metadata attachment 생성: item ${attachment?.id}`);
-    return attachment;
+    const tempPath = await this._writeTempFile(
+      parentItem,
+      "meta",
+      "json",
+      json
+    );
+    try {
+      const file = this._pathToFile(tempPath);
+      const attachment = await Zotero.Attachments.importFromFile({
+        file,
+        parentItemID: parentItem.id,
+        title: this.META_FILENAME,
+        contentType: "application/json",
+        charset: "utf-8",
+      });
+      PTLogger.info(`metadata attachment 생성: item ${attachment?.id}`);
+      return attachment;
+    } finally {
+      await this._removeTempFile(tempPath);
+    }
+  },
+
+  async _writeTempFile(parentItem, kind, extension, content) {
+    const timestamp = new Date().toISOString().replace(/[^0-9]/g, "");
+    const filename = `paperflow-${kind}-${parentItem.id}-${timestamp}.${extension}`;
+    const path = this._joinPath(this._getTempDirPath(), filename);
+    await Zotero.File.putContentsAsync(path, content);
+    // TODO: support an explicit user export folder in addition to Zotero attachments.
+    PTLogger.info(`임시 파일 생성: ${path}`);
+    return path;
+  },
+
+  async _removeTempFile(path) {
+    try {
+      if (typeof IOUtils !== "undefined" && typeof IOUtils.remove === "function") {
+        await IOUtils.remove(path, { ignoreAbsent: true });
+        return;
+      }
+      const file = this._pathToFile(path);
+      if (file && typeof file.exists === "function" && file.exists()) {
+        file.remove(false);
+      }
+    } catch (e) {
+      PTLogger.warn(`임시 파일 삭제 실패: ${e.message}`);
+    }
+  },
+
+  _getTempDirPath() {
+    if (typeof Zotero.getTempDirectory === "function") {
+      const tempDir = Zotero.getTempDirectory();
+      if (tempDir?.path) return tempDir.path;
+      if (typeof tempDir === "string") return tempDir;
+    }
+    throw new Error("Zotero temporary directory is unavailable");
+  },
+
+  _joinPath(dirPath, filename) {
+    if (typeof PathUtils !== "undefined" && typeof PathUtils.join === "function") {
+      return PathUtils.join(dirPath, filename);
+    }
+    return dirPath.replace(/[\\/]$/, "") + "/" + filename;
+  },
+
+  _pathToFile(path) {
+    if (Zotero.File && typeof Zotero.File.pathToFile === "function") {
+      return Zotero.File.pathToFile(path);
+    }
+    return path;
+  },
+
+  async _deleteStaleAttachment(attachment, filename) {
+    if (!attachment || typeof attachment.eraseTx !== "function") {
+      throw new Error(`${filename} 기존 attachment 파일 경로를 찾지 못했습니다.`);
+    }
+    PTLogger.warn(`${filename} 기존 attachment 파일 경로 없음 — stale attachment 삭제 후 재생성`);
+    await attachment.eraseTx();
+  },
+
+  _storageError(userMessage, cause) {
+    const detail = cause?.stack || cause?.message || String(cause);
+    PTLogger.error(`${userMessage}: ${detail}`);
+    const err = new Error(userMessage);
+    err.cause = cause;
+    return err;
   },
 
   // ── Zotero Note 저장 ──────────────────────────────────────────────────────
@@ -243,6 +348,89 @@ ${sections.map(s => renderSection(s)).join("\n")}
   },
 
   // ── 로드 ──────────────────────────────────────────────────────────────────
+  async getExistingTranslationBundle(parentItem) {
+    const htmlAttachment = await this._findAttachmentByFilename(parentItem, this.HTML_FILENAME);
+    const metaAttachment = await this._findAttachmentByFilename(parentItem, this.META_FILENAME);
+    const note = this._findNoteWithTagSync(parentItem);
+
+    const result = {
+      exists: Boolean(htmlAttachment || metaAttachment || note),
+      completed: false,
+      status: "missing",
+      htmlAttachmentID: htmlAttachment?.id || null,
+      metaAttachmentID: metaAttachment?.id || null,
+      noteID: note?.id || null,
+      completedAt: null,
+      meta: null,
+    };
+
+    if (!result.exists) return result;
+
+    let meta = null;
+    if (metaAttachment) {
+      try {
+        const raw = await this.readAttachmentText(metaAttachment);
+        meta = raw ? JSON.parse(raw) : null;
+      } catch (e) {
+        PTLogger.warn(`[PaperFlow] Failed to parse pt-meta.json: ${e.message}`);
+        result.status = "meta-parse-failed";
+        return result;
+      }
+    } else {
+      meta = this.loadMeta(parentItem);
+    }
+
+    result.meta = meta || null;
+    result.completedAt = meta?.completedAt || null;
+
+    if (!meta) {
+      result.status = "partial";
+      return result;
+    }
+
+    const total = Number(meta.totalChunks || meta.chunks?.length || 0);
+    const done = Number(meta.doneChunks || (meta.chunks || []).filter(c => c.status === "done").length);
+    const failed = Number(meta.failedChunks || (meta.chunks || []).filter(c => c.status === "failed").length);
+    const metaStatus = meta.status || (total > 0 && done >= total && failed === 0 ? "completed" : "partial");
+
+    result.status = metaStatus || "unknown";
+    result.completed = Boolean(
+      htmlAttachment
+      && (metaStatus === "completed" || metaStatus === "done")
+      && total > 0
+      && done >= total
+      && failed === 0
+    );
+
+    if (!result.completed && !["failed", "partial", "running", "unknown", "meta-parse-failed"].includes(result.status)) {
+      result.status = "partial";
+    }
+
+    return result;
+  },
+
+  async readAttachmentText(attachmentOrID) {
+    const attachment = typeof attachmentOrID === "number"
+      ? Zotero.Items.get(attachmentOrID)
+      : attachmentOrID;
+    if (!attachment) return "";
+
+    const path = await this._getAttachmentFilePath(attachment);
+    if (!path) return "";
+    return Zotero.File.getContentsAsync(path);
+  },
+
+  async _getAttachmentFilePath(attachment) {
+    if (!attachment) return null;
+    if (typeof attachment.getFilePathAsync === "function") {
+      return attachment.getFilePathAsync();
+    }
+    if (typeof attachment.getFilePath === "function") {
+      return attachment.getFilePath();
+    }
+    return null;
+  },
+
   loadMeta(parentItem) {
     const note = this._findNoteWithTagSync(parentItem);
     if (!note) return null;
@@ -259,31 +447,33 @@ ${sections.map(s => renderSection(s)).join("\n")}
 
 
   async loadBundle(parentItem) {
-    const htmlAttachment = await this._findAttachmentByFilename(parentItem, this.HTML_FILENAME);
-    const metaAttachment = await this._findAttachmentByFilename(parentItem, this.META_FILENAME);
+    const existing = await this.getExistingTranslationBundle(parentItem);
+    const htmlAttachment = existing.htmlAttachmentID ? Zotero.Items.get(existing.htmlAttachmentID) : null;
+    const metaAttachment = existing.metaAttachmentID ? Zotero.Items.get(existing.metaAttachmentID) : null;
     let htmlText = "";
-    let meta = null;
+    let meta = existing.meta || null;
 
     if (htmlAttachment) {
-      const path = htmlAttachment.getFilePath && htmlAttachment.getFilePath();
-      if (path) {
-        try { htmlText = await Zotero.File.getContentsAsync(path); }
-        catch (e) { PTLogger.warn(`HTML attachment 로드 실패: ${e.message}`); }
-      }
+      try { htmlText = await this.readAttachmentText(htmlAttachment); }
+      catch (e) { PTLogger.warn(`HTML attachment 로드 실패: ${e.message}`); }
     }
 
-    if (metaAttachment) {
-      const path = metaAttachment.getFilePath && metaAttachment.getFilePath();
-      if (path) {
-        try { meta = JSON.parse(await Zotero.File.getContentsAsync(path)); }
-        catch (e) { PTLogger.warn(`metadata attachment 로드 실패: ${e.message}`); }
-      }
-    }
     if (!meta) meta = this.loadMeta(parentItem) || {};
 
     const note = this._findNoteWithTagSync(parentItem);
+    const noteHTML = note ? note.getNote() : "";
     const sections = this._extractSectionsFromHTML(htmlText);
-    return { parentItem, htmlAttachment, metaAttachment, note, htmlText, meta, sections };
+    return {
+      parentItem,
+      htmlAttachment,
+      metaAttachment,
+      note,
+      noteHTML,
+      htmlText,
+      meta,
+      sections,
+      existing,
+    };
   },
 
   _extractSectionsFromHTML(htmlText) {
@@ -331,23 +521,47 @@ ${sections.map(s => renderSection(s)).join("\n")}
     const attIDs = parentItem.getAttachments ? parentItem.getAttachments() : [];
     for (const id of attIDs) {
       const att = Zotero.Items.get(id);
-      if (att && (att.getField("title") || "").includes(filename)) return att;
+      if (!att) continue;
+      const title = att.getField("title") || "";
+      if (title === filename || title.startsWith(`${filename} `) || title.startsWith(`${filename} —`)) {
+        return att;
+      }
     }
     return null;
   },
 
   // ── metadata 구조 빌드 ────────────────────────────────────────────────────
   _buildMeta(meta, jobs, htmlAttachmentId) {
+    const totalChunks = jobs.length;
+    const doneChunks = jobs.filter(j => j.status === "done" || j.status === "completed").length;
+    const failedChunks = jobs.filter(j => j.status === "failed" || j.error).length;
+    const partialChunks = jobs.filter(j =>
+      j.status !== "done"
+      && j.status !== "completed"
+      && j.status !== "failed"
+      && !j.error
+    ).length;
+    const status = totalChunks > 0 && doneChunks === totalChunks && failedChunks === 0
+      ? "completed"
+      : "partial";
+    const savedAt = new Date().toISOString();
+
     return {
       version: "0.1.0",
+      status,
       modelName: "gemini-3.1-flash-lite",
       title: meta.title,
       startedAt: meta.startedAt,
-      completedAt: new Date().toISOString(),
+      completedAt: status === "completed" ? savedAt : null,
+      updatedAt: savedAt,
       htmlAttachmentId: htmlAttachmentId || null,
-      totalChunks: jobs.length,
-      doneChunks: jobs.filter(j => j.status === "done").length,
-      failedChunks: jobs.filter(j => j.status === "failed").length,
+      htmlAttachmentID: htmlAttachmentId || null,
+      metaAttachmentId: null,
+      metaAttachmentID: null,
+      totalChunks,
+      doneChunks,
+      failedChunks,
+      partialChunks,
       chunks: jobs.map(j => ({
         chunkId: j.chunkId,
         sectionId: j.sectionId,

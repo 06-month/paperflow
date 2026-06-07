@@ -50,16 +50,20 @@ window.PTPrefsUI = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ contents: [{ parts: [{ text: "hi" }] }], generationConfig: { maxOutputTokens: 5 } }),
       });
-      if (r.ok || r.status === 400) {
+      if (r.ok) {
         this._status("✓ 연결 성공 — Gemini 3.1 Flash-Lite 사용 가능", "green");
       } else if (r.status === 403) {
-        this._status("✗ API 키가 유효하지 않습니다.", "red");
-        this._reportError(`Gemini connection test failed: HTTP ${r.status} ${await this._readErrorBody(r)}`);
+        const body = await this._readErrorBody(r);
+        this._status("✗ API 키가 유효하지 않습니다. (HTTP 403)", "red");
+        this._reportError(`Gemini connection test failed: HTTP ${r.status} ${body}`);
       } else if (r.status === 429) {
-        this._status("✓ 키 유효 (Rate limit 일시 초과)", "orange");
+        const body = await this._readErrorBody(r);
+        this._status("⚠ Rate limit 일시 초과 (HTTP 429)", "orange");
+        this._reportError(`Gemini connection test warning: HTTP ${r.status} ${body}`);
       } else {
+        const body = await this._readErrorBody(r);
         this._status(`✗ 오류 ${r.status}`, "red");
-        this._reportError(`Gemini connection test failed: HTTP ${r.status} ${await this._readErrorBody(r)}`);
+        this._reportError(`Gemini connection test failed: HTTP ${r.status} ${body}`);
       }
     } catch (e) {
       this._status(`✗ 네트워크 오류: ${e.message}`, "red");
