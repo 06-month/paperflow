@@ -303,4 +303,8 @@ junjeon@edu.hanbat.ac.kr
 
 ## License
 
-PaperFlow is intended to be an open-source project. A formal license file should be added before redistribution, reuse, or external contribution at scale.
+## License
+
+PaperFlow is open-source software released under the MIT License.
+
+You are free to use, modify, and distribute this project under the terms of the license. See [LICENSE](LICENSE) for details.
