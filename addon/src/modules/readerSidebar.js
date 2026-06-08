@@ -35,7 +35,7 @@ var PaperFlowReaderSidebar = {
 
   // zoteropdftranslate와 같은 패턴: Zotero가 만든 body 안에 custom element
   // 하나만 제공한다. 실제 내용은 custom element connectedCallback에서 구성.
-  BODY_XHTML: "<paperflow-reader-panel />",
+  BODY_XHTML: '<paperflow-reader-panel xmlns="http://www.w3.org/1999/xhtml" />',
 
   _registeredPaneID: null,
   _styleSheetRegistered: false,
@@ -1090,14 +1090,14 @@ var PaperFlowReaderSidebar = {
       let order = current
         ? current.split(",").map((id) => id.trim()).filter(Boolean)
         : this.DEFAULT_SIDENAV_ORDER.slice();
-      if (order.includes(this._registeredPaneID)) {
-        this._clog(`sidenav.order already contains paneID=${this._registeredPaneID}`);
-        return;
-      }
-      order = order.filter((id) => id !== this.PANE_ID);
-      order.unshift(this._registeredPaneID);
+      
+      // 기존에 맨 앞(unshift)에 위치했던 값을 필터링하고 맨 뒤로 새로 밀어넣기 위해
+      // PANE_ID와 registeredPaneID를 모두 제거한 뒤 push합니다.
+      order = order.filter((id) => id !== this.PANE_ID && id !== this._registeredPaneID);
+      order.push(this._registeredPaneID);
+      
       Zotero.Prefs.set("sidenav.order", order.join(","));
-      this._clog(`sidenav.order inserted paneID=${this._registeredPaneID}`);
+      this._clog(`sidenav.order updated (moved to bottom): ${this._registeredPaneID}`);
     } catch (e) {
       this._warn(`sidenav.order update skipped: ${e.message}`);
     }
