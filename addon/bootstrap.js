@@ -28,6 +28,7 @@ async function startup({ id, version, rootURI }) {
   Services.scriptloader.loadSubScript(rootURI + "src/modules/translator.js");
   Services.scriptloader.loadSubScript(rootURI + "src/modules/storage.js");
   Services.scriptloader.loadSubScript(rootURI + "src/modules/chat.js");
+  Services.scriptloader.loadSubScript(rootURI + "src/modules/readerSidebar.js");
 
   // ── 메인 클래스 로드 ──────────────────────────────────────────────────────
   Services.scriptloader.loadSubScript(rootURI + "src/addon.js");
@@ -43,10 +44,27 @@ async function startup({ id, version, rootURI }) {
 
   PaperTranslator = new PaperTranslatorAddon(rootURI);
   await PaperTranslator.init();
+
+  // ── Reader sidebar PoC 등록 (실패해도 startup을 죽이지 않음) ─────────────
+  try {
+    if (typeof PaperFlowReaderSidebar !== "undefined") {
+      PaperFlowReaderSidebar.install();
+    }
+  } catch (e) {
+    log(`reader sidebar install failed: ${e.message}`);
+    try { Components.utils.reportError(e); } catch (_) {}
+  }
 }
 
 function shutdown({ id, version, rootURI }, reason) {
   log("shutdown");
+  try {
+    if (typeof PaperFlowReaderSidebar !== "undefined") {
+      PaperFlowReaderSidebar.remove();
+    }
+  } catch (e) {
+    try { Zotero.debug(`[PaperFlow] reader sidebar remove failed: ${e.message}`); } catch (_) {}
+  }
   try {
     if (PaperTranslator) {
       PaperTranslator.destroy();

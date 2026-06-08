@@ -1,0 +1,72 @@
+/* PaperFlow reader/item-pane sidenav icon: gray by default, blue on
+ * hover/selected. Keyed on Zotero's own stable `data-pane` attribute
+ * (no DOM appending). The default gray icon is set via the registerSection
+ * `icon` option; this sheet only overrides the icon CSS variables for the
+ * active/hover states. Registered as a USER sheet so `!important` overrides
+ * the inline `--custom-sidenav-icon-light/dark` declaration Zotero sets.
+ *
+ * TODO: replace the 24px PNGs with dedicated 16x16 (header) and 20x20
+ *       (sidenav) assets, plus @2x variants, once finalized.
+ */
+/* Defense-in-depth: keep the right sidenav button icon-only. The primary fix
+ * is in paperflow.ftl (sidenav message is attribute-only `.tooltiptext`, so no
+ * textContent is set). This rule, scoped strictly to our own pane, hides any
+ * stray label/text child should Zotero ever wrap the label in an element.
+ * Never affects other Zotero sidenav buttons.
+ */
+.btn[data-pane$="paperflow-reader"] > label,
+.btn[data-pane$="paperflow-reader"] > span,
+.btn[data-pane$="paperflow-reader"] > .label,
+.btn[data-pane$="paperflow-reader"] > .toolbarbutton-text {
+  display: none !important;
+}
+
+/* PoC diagnostic box styling (bodyXHTML skeleton). Class names are unique to
+ * PaperFlow, so these rules don't touch other Zotero panes.
+ * TODO: remove the debug blue border when the real sidebar UI lands.
+ */
+.paperflow-reader-poc-root {
+  display: block;
+  padding: 12px;
+  margin: 8px 0;
+  border: 2px solid #0052ff;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #0a0b0d;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.paperflow-reader-poc-title {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 8px;
+  color: #0052ff;
+}
+.paperflow-reader-poc-note {
+  margin-top: 10px;
+  color: #7c828a;
+  font-size: 12px;
+}
+.paperflow-reader-poc-row {
+  display: flex;
+  gap: 8px;
+  margin: 3px 0;
+}
+.paperflow-reader-poc-key {
+  min-width: 150px;
+  color: #7c828a;
+}
+.paperflow-reader-poc-val {
+  color: #1f2328;
+  overflow-wrap: anywhere;
+}
+
+.btn[data-pane$="paperflow-reader"]:hover,
+.btn[data-pane$="paperflow-reader"]:focus,
+.btn[data-pane$="paperflow-reader"][selected],
+.btn[data-pane$="paperflow-reader"].selected,
+.btn[data-pane$="paperflow-reader"][aria-selected="true"],
+.pin-wrapper.pinned .btn[data-pane$="paperflow-reader"] {
+  --custom-sidenav-icon-light: url('chrome://paperflow/content/icons/paperflow-sidebar-blue-24.png') !important;
+  --custom-sidenav-icon-dark: url('chrome://paperflow/content/icons/paperflow-sidebar-blue-24.png') !important;
+}
