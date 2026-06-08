@@ -12,10 +12,13 @@
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
 </p>
 ---
+
 ## Overview
+
 **PaperFlow** is an AI-assisted Zotero Reader sidebar for paper summarization, translation, metadata inspection, and paper-context-aware chat.
 It brings an AI reading layer directly into Zotero Reader, allowing researchers to review generated summaries, inspect translations, check processing metadata, and ask paper-specific questions without switching between PDF viewers, translators, LLM chat windows, note-taking apps, or external web tools.
 PaperFlow is not designed as a generic translator. It is an experimental, work-in-progress attempt to build a **Zotero-native research assistant** for academic reading workflows.
+
 ```text
 Read → Summarize → Translate → Inspect → Ask
 
