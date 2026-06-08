@@ -108,6 +108,7 @@ Current status:
 - Zotero artifact reuse through generated notes and attachments.
 - Experimental UI and runtime behavior that still requires manual validation in Zotero.
 
+** PaperFlow can be tested with the Gemini API free tier, which is currently available with daily usage limits. **
 PaperFlow should not yet be considered production-stable. It is suitable for development, testing, and iterative research-tooling experiments.
 
 ## Installation / Build
