@@ -24,26 +24,29 @@
         <html:button id="pt-tab-meta" type="button" class="pt-tab">Meta</html:button>
       </html:nav>
 
-      <html:main id="pt-content" class="pt-text-view">
-        Loading...
-      </html:main>
+      <html:div id="pt-main">
+        <html:main id="pt-content" class="pt-text-view">
+          Loading...
+        </html:main>
 
-      <html:section id="pt-chat">
-        <html:div id="pt-chat-head">Ask Gemini about this paper</html:div>
-        <html:div id="pt-chat-log">
-          <html:div class="pt-msg pt-msg-assistant">안녕하세요. 이 논문의 요약과 번역 내용을 바탕으로 답변할 수 있습니다.</html:div>
-        </html:div>
-        <html:div id="pt-chat-composer" class="pt-chat-composer">
-          <html:textarea id="pt-chat-input" placeholder="무엇이든 질문하세요."></html:textarea>
-          <html:div class="pt-composer-actions">
-            <html:div class="pt-composer-tools">
-              <html:button id="pt-chat-attach" type="button" class="pt-icon-btn"
-                title="첨부파일은 이후 버전에서 지원 예정입니다." aria-label="첨부파일은 이후 버전에서 지원 예정입니다." disabled="true">+</html:button>
-            </html:div>
-            <html:button id="pt-chat-send" type="button" class="pt-send-btn" title="Send" aria-label="Send">↑</html:button>
+        <html:div id="pt-divider" class="pt-divider"></html:div>
+
+        <html:section id="pt-chat" aria-label="Gemini Chat">
+          <html:div id="pt-chat-log">
+            <html:div class="pt-msg pt-msg-assistant">안녕하세요. 이 논문의 요약과 번역 내용을 바탕으로 답변할 수 있습니다.</html:div>
           </html:div>
-        </html:div>
-      </html:section>
+          <html:div id="pt-chat-composer" class="pt-chat-composer">
+            <html:textarea id="pt-chat-input" placeholder="무엇이든 질문하세요."></html:textarea>
+            <html:div class="pt-composer-actions">
+              <html:div class="pt-composer-tools">
+                <html:button id="pt-chat-attach" type="button" class="pt-icon-btn"
+                  title="첨부파일은 이후 버전에서 지원 예정입니다." aria-label="첨부파일은 이후 버전에서 지원 예정입니다." disabled="true">+</html:button>
+              </html:div>
+              <html:button id="pt-chat-send" type="button" class="pt-send-btn" title="Send" aria-label="Send">↑</html:button>
+            </html:div>
+          </html:div>
+        </html:section>
+      </html:div>
     </html:div>
   </vbox>
   <script type="application/javascript" src="panel.js"></script>

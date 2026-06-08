@@ -5,3 +5,6 @@ node_modules/
 .zotero-test/
 tmp/
 *.tmp
+AGENTS.md
+.agents/
+.codex/

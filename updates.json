@@ -3,8 +3,8 @@
     "paperflow@06-month": {
       "updates": [
         {
-          "version": "0.2.2",
-          "update_link": "https://github.com/06-month/paperflow/releases/download/v0.2.2/paperflow.xpi",
+          "version": "0.3.0",
+          "update_link": "https://github.com/06-month/paperflow/releases/download/v0.3.0/paperflow.xpi",
           "applications": {
             "zotero": {
               "strict_min_version": "7.0",

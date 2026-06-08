@@ -79,10 +79,12 @@ var PTJobQueue = {
             const waitMs = e.retryAfterMs || this.RETRY_BASE_MS;
             PTLogger.info(`Rate limit — ${Math.ceil(waitMs / 1000)}초 대기`);
             await this._sleep(waitMs);
+            if (this._cancelled) break;
           } else if (attempt < this.MAX_RETRIES) {
             const backoff = this.RETRY_BASE_MS * Math.pow(2, attempt);
             PTLogger.info(`재시도 대기: ${Math.ceil(backoff / 1000)}초`);
             await this._sleep(backoff);
+            if (this._cancelled) break;
           } else {
             job.status = "failed";
             job.error = e.message;
@@ -111,6 +113,11 @@ var PTJobQueue = {
       }
     }
 
+    if (this._cancelled) {
+      PTLogger.info(`큐 취소됨: ${doneCount}/${total} chunk 완료`);
+      throw new PTError("번역이 취소되었습니다.", "CANCELLED");
+    }
+
     PTLogger.info(`큐 완료: ${doneCount}/${total} chunk 성공`);
     if (this._onComplete) {
       await this._onComplete(this._jobs);
@@ -118,6 +125,16 @@ var PTJobQueue = {
   },
 
   _sleep(ms) {
-    return new Promise(r => setTimeout(r, ms));
+    return new Promise((resolve) => {
+      const started = Date.now();
+      const tick = () => {
+        if (this._cancelled || Date.now() - started >= ms) {
+          resolve();
+          return;
+        }
+        setTimeout(tick, Math.min(250, ms - (Date.now() - started)));
+      };
+      tick();
+    });
   },
 };

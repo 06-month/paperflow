@@ -44,6 +44,7 @@ async function startup({ id, version, rootURI }) {
 
   PaperTranslator = new PaperTranslatorAddon(rootURI);
   await PaperTranslator.init();
+  Zotero.PaperTranslator = PaperTranslator;
 
   // ── Reader sidebar PoC 등록 (실패해도 startup을 죽이지 않음) ─────────────
   try {
@@ -70,6 +71,7 @@ function shutdown({ id, version, rootURI }, reason) {
       PaperTranslator.destroy();
       PaperTranslator = undefined;
     }
+    Zotero.PaperTranslator = undefined;
   } finally {
     unregisterChrome();
   }

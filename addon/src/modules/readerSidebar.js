@@ -1,20 +1,6 @@
 "use strict";
 
-// PaperFlow Reader Sidebar PoC — minimal, lifecycle-correct version.
-//
-// Zotero item pane virtualizes custom sections: an IntersectionObserver in
-// itemDetails.js calls section.render() when the pane scrolls into view and
-// section.discard() (empties the body) when it scrolls out of view
-// (itemDetails.js `_handleIntersection`). So an off-screen PaperFlow section
-// legitimately has no `data-type="body"` content — that is NOT a bug.
-//
-// Therefore we do not try to keep an off-screen body alive. We provide a static
-// `bodyXHTML` skeleton (re-injected by Zotero on each render) and fill its rows
-// in onRender. When the section is visible, the body exists and shows; when
-// off-screen it is discarded and rebuilt on next view.
-//
-// TODO: replace icons with dedicated 16/20px assets; replace the debug blue
-//       border once the real Summary/Translation/Chat UI is ported.
+// PaperFlow Reader Sidebar - clean, production-ready version.
 var PaperFlowReaderSidebar = {
   PANE_ID: "paperflow-reader",
   PLUGIN_ID: "paperflow@06-month",
@@ -33,13 +19,10 @@ var PaperFlowReaderSidebar = {
     "related",
   ],
 
-  // zoteropdftranslate와 같은 패턴: Zotero가 만든 body 안에 custom element
-  // 하나만 제공한다. 실제 내용은 custom element connectedCallback에서 구성.
   BODY_XHTML: '<paperflow-reader-panel xmlns="http://www.w3.org/1999/xhtml" />',
 
   _registeredPaneID: null,
   _styleSheetRegistered: false,
-  _postRenderTimers: [],
   _loggedInitProps: false,
   _loggedDestroyProps: false,
   _loggedItemChangeProps: false,
@@ -60,8 +43,8 @@ var PaperFlowReaderSidebar = {
       return;
     }
 
-    this._injectFTL();          // best-effort; Zotero also auto-loads locale/*.ftl
-    this._registerStyleSheet(); // gray→blue active state (best-effort)
+    this._injectFTL();
+    this._registerStyleSheet();
     this._ensureReaderPanelElement();
 
     try {
@@ -76,20 +59,7 @@ var PaperFlowReaderSidebar = {
         onItemChange: (props) => this._onItemChange(props),
         onRender: (props) => this._onRender(props),
         onToggle: (props) => this._onToggle(props),
-        sectionButtons: [
-          {
-            type: "openStandalone",
-            icon: this.SECTION_BUTTON_ICON,
-            onClick: (props) => this._onSectionButtonClick("openStandalone", props),
-          },
-          {
-            type: "fullHeight",
-            icon: this.SECTION_BUTTON_ICON,
-            onClick: (props) => this._onSectionButtonClick("fullHeight", props),
-          },
-        ],
       };
-      this._logSectionDefinition(sectionDefinition);
       const paneID = manager.registerSection(sectionDefinition);
       this._registeredPaneID = paneID || this.PANE_ID;
       this._clog(`registerSection returned: ${this._registeredPaneID}`);
@@ -102,7 +72,6 @@ var PaperFlowReaderSidebar = {
 
   // ── 해제 ────────────────────────────────────────────────────────────────
   remove() {
-    this._clearPostRenderChecks();
     this._unregisterStyleSheet();
     if (!this._registeredPaneID) return;
     try {
@@ -134,23 +103,881 @@ var PaperFlowReaderSidebar = {
         return false;
       }
       if (win.customElements.get("paperflow-reader-panel")) {
-        this._clog("paperflow-reader-panel already defined");
         return true;
       }
 
       const xhtmlNS = this.XHTML_NS;
       const PanelElement = class extends win.HTMLElement {
+        constructor() {
+          super();
+          this._item = null;
+          this._rendered = false;
+          this._loadSeq = 0;
+          this._bundle = null;
+          this._activeTab = "summary";
+          this._chatSending = false;
+          this._onHostResize = null;
+          this._lastHostHeight = 0;
+          this._lastHostMaxHeight = 0;
+          this._lastChatHeight = 0;
+          this._lastViewportHeight = 0;
+          this._lastHostTop = null;
+          this._lastSectionOpenHeight = 0;
+        }
+
+        set item(val) {
+          this._item = val;
+          this._updateItemUI();
+        }
+
+        get item() {
+          return this._item;
+        }
+
         connectedCallback() {
-          if (this.firstChild) return;
+          if (this._rendered) {
+            this._wireHostResize();
+            this._applyLayoutSizing();
+            this._updateItemUI();
+            return;
+          }
+          this._render();
+          this._wireResize();
+          this._updateItemUI();
+          this._rendered = true;
+          this._applyLayoutSizing();
+          this._wireHostResize();
+          try {
+            const w = this.ownerDocument && this.ownerDocument.defaultView;
+            if (w && typeof w.requestAnimationFrame === "function") {
+              w.requestAnimationFrame(() => this._applyLayoutSizing());
+            }
+          } catch (_) { /* noop */ }
+        }
+
+        disconnectedCallback() {
+          try {
+            const w = this.ownerDocument && this.ownerDocument.defaultView;
+            if (w && this._onHostResize) {
+              w.removeEventListener("resize", this._onHostResize);
+              this._onHostResize = null;
+            }
+          } catch (_) { /* noop */ }
+        }
+
+        _wireHostResize() {
+          try {
+            const win = this.ownerDocument && this.ownerDocument.defaultView;
+            if (!win) return;
+            if (!this._onHostResize) {
+              this._onHostResize = () => this._applyLayoutSizing({ onlyVerticalChange: true });
+              win.addEventListener("resize", this._onHostResize);
+            }
+          } catch (_) { /* noop */ }
+        }
+
+        _applyLayoutSizing(options = {}) {
+          const changed = this._applyHostHeight(options);
+          if (changed) this._clampChatHeight();
+        }
+
+        _applyHostHeight(options = {}) {
+          try {
+            const win = this.ownerDocument && this.ownerDocument.defaultView;
+            if (!win) return false;
+            const rect = this.getBoundingClientRect();
+            const viewportHeight = win.innerHeight || 800;
+            const top = Math.round(rect.top || 0);
+
+            if (options.onlyVerticalChange) {
+              const viewportDelta = Math.abs(viewportHeight - (this._lastViewportHeight || 0));
+              const topDelta = this._lastHostTop == null ? 0 : Math.abs(top - this._lastHostTop);
+              if (viewportDelta < 2 && topDelta < 2) return false;
+            }
+
+            const bottomPadding = 32;
+            const available = viewportHeight - rect.top - bottomPadding;
+
+            const minHeight = 560;
+            const safeAvailable = Number.isFinite(available) && available > 0 ? available : 800;
+            const maxHeight = this._getMaxHostHeight(minHeight, safeAvailable);
+            const savedHeight = this._getSavedHostHeight();
+            const target = savedHeight || Math.floor(safeAvailable * 0.92);
+            const height = Math.max(minHeight, Math.min(target, maxHeight));
+
+            const hostChanged = height !== this._lastHostHeight || maxHeight !== this._lastHostMaxHeight;
+            if (hostChanged) {
+              this.style.height = `${height}px`;
+              this.style.maxHeight = `${maxHeight}px`;
+              this.style.minHeight = `${minHeight}px`;
+              this._lastHostHeight = height;
+              this._lastHostMaxHeight = maxHeight;
+              this._lastViewportHeight = viewportHeight;
+              this._lastHostTop = top;
+              this.style.overflow = "hidden";
+            }
+            const sectionChanged = this._syncZoteroSectionHeight(height);
+            if (hostChanged || sectionChanged) return true;
+            this._lastViewportHeight = viewportHeight;
+            this._lastHostTop = top;
+            this.style.overflow = "hidden";
+            return false;
+          } catch (_) {
+            return false;
+          }
+        }
+
+        _getMaxHostHeight(minHeight = 560, fallbackAvailable = 900) {
+          try {
+            const win = this.ownerDocument && this.ownerDocument.defaultView;
+            const rect = this.getBoundingClientRect();
+            const available = win ? (win.innerHeight || fallbackAvailable) - rect.top - 12 : fallbackAvailable;
+            return Math.max(minHeight, Math.min(Math.floor(available), 1200));
+          } catch (_) {
+            return Math.max(minHeight, Math.min(Math.floor(fallbackAvailable || 900), 1200));
+          }
+        }
+
+        _getSavedHostHeight() {
+          try {
+            const saved = parseInt(localStorage.getItem("paperflow-host-height-v1"), 10);
+            return Number.isInteger(saved) && saved >= 560 ? saved : null;
+          } catch (_) {
+            return null;
+          }
+        }
+
+        _applyManualHostHeight(height) {
+          try {
+            const minHeight = 560;
+            const maxHeight = this._getMaxHostHeight(minHeight, 900);
+            const nextHeight = Math.max(minHeight, Math.min(Math.round(Number(height) || minHeight), maxHeight));
+            this.style.height = `${nextHeight}px`;
+            this.style.maxHeight = `${maxHeight}px`;
+            this.style.minHeight = `${minHeight}px`;
+            this.style.overflow = "hidden";
+            this._lastHostHeight = nextHeight;
+            this._lastHostMaxHeight = maxHeight;
+            this._syncZoteroSectionHeight(nextHeight);
+            this._clampChatHeight();
+            try {
+              localStorage.setItem("paperflow-host-height-v1", String(nextHeight));
+            } catch (_) { /* noop */ }
+          } catch (_) {
+            /* noop */
+          }
+        }
+
+        _syncZoteroSectionHeight(height) {
+          try {
+            const targetHeight = Math.max(560, Math.round(Number(height) || 0));
+            if (!targetHeight) return false;
+
+            const body = this.closest && this.closest('[data-type="body"]');
+            const section = body && body.closest ? body.closest("collapsible-section") : null;
+            if (!body || !section) return false;
+
+            let changed = false;
+            const heightPx = `${targetHeight}px`;
+
+            if (body.style.height !== heightPx) {
+              body.style.height = heightPx;
+              body.style.minHeight = heightPx;
+              body.style.overflow = "hidden";
+              changed = true;
+            }
+
+            const openHeight = Math.max(targetHeight, Math.ceil(body.scrollHeight || 0));
+            const openHeightPx = `${openHeight}px`;
+            if (section.style.getPropertyValue("--open-height") !== openHeightPx) {
+              section.style.setProperty("--open-height", openHeightPx);
+              this._lastSectionOpenHeight = openHeight;
+              changed = true;
+            }
+
+            return changed;
+          } catch (_) {
+            return false;
+          }
+        }
+
+        _clampChatHeight() {
+          try {
+            const root = this.querySelector("#pt-root");
+            if (!root) return;
+            const hostHeight = this.getBoundingClientRect().height || 700;
+            const minChat = 160;
+            const maxChat = this._getMaxChatHeight(hostHeight, minChat);
+            const defaultChat = Math.floor(hostHeight * 0.24);
+            let saved = null;
+            try {
+              saved = parseInt(localStorage.getItem("paperflow-chat-height-v2"), 10);
+            } catch (_) { /* noop */ }
+            const raw = Number.isInteger(saved) ? saved : defaultChat;
+            const chatHeight = Math.max(minChat, Math.min(raw, maxChat));
+            if (chatHeight !== this._lastChatHeight) {
+              root.style.setProperty("--paperflow-chat-height", `${chatHeight}px`);
+              this._lastChatHeight = chatHeight;
+            }
+          } catch (_) {
+            /* noop */
+          }
+        }
+
+        _render() {
           const doc = this.ownerDocument;
+
+          // Root
           const root = doc.createElementNS(xhtmlNS, "div");
-          root.setAttribute("class", "paperflow-reader-poc-root");
-          root.setAttribute("data-paperflow-poc", "true");
-          const title = doc.createElementNS(xhtmlNS, "div");
-          title.setAttribute("class", "paperflow-reader-poc-title");
-          title.textContent = "PaperFlow Static Body";
-          root.appendChild(title);
+          root.setAttribute("id", "pt-root");
+
+          // Header
+          const header = doc.createElementNS(xhtmlNS, "header");
+          header.setAttribute("id", "pt-header");
+
+          const brandRow = doc.createElementNS(xhtmlNS, "div");
+          brandRow.setAttribute("id", "pt-brandrow");
+
+          const brandTitle = doc.createElementNS(xhtmlNS, "span");
+          brandTitle.setAttribute("id", "pt-brand");
+          brandTitle.textContent = "PaperFlow";
+
+          const statusChip = doc.createElementNS(xhtmlNS, "span");
+          statusChip.setAttribute("id", "pt-status-chip");
+          statusChip.setAttribute("class", "pt-chip pt-chip-missing");
+          statusChip.textContent = "missing";
+          this._statusChip = statusChip;
+
+          const chunkProgress = doc.createElementNS(xhtmlNS, "span");
+          chunkProgress.setAttribute("id", "pt-chunk-progress");
+          chunkProgress.setAttribute("class", "pt-chunk");
+          this._chunkProgress = chunkProgress;
+
+          brandRow.appendChild(brandTitle);
+          brandRow.appendChild(statusChip);
+          brandRow.appendChild(chunkProgress);
+
+          const paperTitle = doc.createElementNS(xhtmlNS, "h1");
+          paperTitle.setAttribute("id", "pt-paper-title");
+          paperTitle.textContent = "PaperFlow";
+          this._paperTitle = paperTitle;
+
+          const statusLine = doc.createElementNS(xhtmlNS, "p");
+          statusLine.setAttribute("id", "pt-status");
+          statusLine.setAttribute("class", "pt-status-line");
+          statusLine.textContent = "Panel loaded. Initializing...";
+          this._statusLine = statusLine;
+
+          header.appendChild(brandRow);
+          header.appendChild(paperTitle);
+          header.appendChild(statusLine);
+          root.appendChild(header);
+
+          // Tabs Navigation
+          const tabsNav = doc.createElementNS(xhtmlNS, "nav");
+          tabsNav.setAttribute("id", "pt-tabs");
+          tabsNav.setAttribute("aria-label", "PaperFlow views");
+
+          const tabSummary = doc.createElementNS(xhtmlNS, "button");
+          tabSummary.setAttribute("id", "pt-tab-summary");
+          tabSummary.setAttribute("type", "button");
+          tabSummary.setAttribute("class", "pt-tab pt-tab-active");
+          tabSummary.textContent = "Summary";
+          this._tabSummary = tabSummary;
+
+          const tabTranslation = doc.createElementNS(xhtmlNS, "button");
+          tabTranslation.setAttribute("id", "pt-tab-translation");
+          tabTranslation.setAttribute("type", "button");
+          tabTranslation.setAttribute("class", "pt-tab");
+          tabTranslation.textContent = "Translation";
+          this._tabTranslation = tabTranslation;
+
+          const tabMeta = doc.createElementNS(xhtmlNS, "button");
+          tabMeta.setAttribute("id", "pt-tab-meta");
+          tabMeta.setAttribute("type", "button");
+          tabMeta.setAttribute("class", "pt-tab");
+          tabMeta.textContent = "Meta";
+          this._tabMeta = tabMeta;
+
+          tabsNav.appendChild(tabSummary);
+          tabsNav.appendChild(tabTranslation);
+          tabsNav.appendChild(tabMeta);
+          root.appendChild(tabsNav);
+
+          // Main Workspace Area
+          const mainArea = doc.createElementNS(xhtmlNS, "div");
+          mainArea.setAttribute("id", "pt-main");
+
+          // Main Content Area
+          const contentArea = doc.createElementNS(xhtmlNS, "main");
+          contentArea.setAttribute("id", "pt-content");
+          contentArea.setAttribute("class", "pt-text-view");
+          contentArea.textContent = "Loading...";
+          this._contentArea = contentArea;
+          mainArea.appendChild(contentArea);
+
+          // Resizable Divider
+          const divider = doc.createElementNS(xhtmlNS, "div");
+          divider.setAttribute("id", "pt-divider");
+          divider.setAttribute("class", "pt-divider");
+          mainArea.appendChild(divider);
+
+          // Chat Section
+          const chatSection = doc.createElementNS(xhtmlNS, "section");
+          chatSection.setAttribute("id", "pt-chat");
+          chatSection.setAttribute("aria-label", "Gemini Chat");
+
+          const chatLog = doc.createElementNS(xhtmlNS, "div");
+          chatLog.setAttribute("id", "pt-chat-log");
+          this._chatLog = chatLog;
+
+          const chatComposer = doc.createElementNS(xhtmlNS, "div");
+          chatComposer.setAttribute("id", "pt-chat-composer");
+          chatComposer.setAttribute("class", "pt-chat-composer");
+
+          const chatInput = doc.createElementNS(xhtmlNS, "textarea");
+          chatInput.setAttribute("id", "pt-chat-input");
+          chatInput.setAttribute("placeholder", "무엇이든 질문하세요.");
+          this._chatInput = chatInput;
+
+          const composerActions = doc.createElementNS(xhtmlNS, "div");
+          composerActions.setAttribute("class", "pt-composer-actions");
+
+          const composerTools = doc.createElementNS(xhtmlNS, "div");
+          composerTools.setAttribute("class", "pt-composer-tools");
+
+          const chatAttach = doc.createElementNS(xhtmlNS, "button");
+          chatAttach.setAttribute("id", "pt-chat-attach");
+          chatAttach.setAttribute("type", "button");
+          chatAttach.setAttribute("class", "pt-icon-btn");
+          chatAttach.setAttribute("title", "첨부파일은 이후 버전에서 지원 예정입니다.");
+          chatAttach.setAttribute("aria-label", "첨부파일은 이후 버전에서 지원 예정입니다.");
+          chatAttach.setAttribute("disabled", "true");
+          chatAttach.textContent = "+";
+          this._chatAttach = chatAttach;
+          composerTools.appendChild(chatAttach);
+
+          const chatSend = doc.createElementNS(xhtmlNS, "button");
+          chatSend.setAttribute("id", "pt-chat-send");
+          chatSend.setAttribute("type", "button");
+          chatSend.setAttribute("class", "pt-send-btn");
+          chatSend.setAttribute("title", "Send");
+          chatSend.setAttribute("aria-label", "Send");
+          chatSend.textContent = "↑";
+          this._chatSend = chatSend;
+
+          composerActions.appendChild(composerTools);
+          composerActions.appendChild(chatSend);
+
+          chatComposer.appendChild(chatInput);
+          chatComposer.appendChild(composerActions);
+
+          chatSection.appendChild(chatLog);
+          chatSection.appendChild(chatComposer);
+          mainArea.appendChild(chatSection);
+
+          root.appendChild(mainArea);
           this.appendChild(root);
+
+          // Wire Tabs Event Listeners
+          tabSummary.addEventListener("click", () => {
+            this._activeTab = "summary";
+            this._setActiveTabUI("summary");
+            this._renderActiveTabContent();
+          });
+          tabTranslation.addEventListener("click", () => {
+            this._activeTab = "translation";
+            this._setActiveTabUI("translation");
+            this._renderActiveTabContent();
+          });
+          tabMeta.addEventListener("click", () => {
+            this._activeTab = "meta";
+            this._setActiveTabUI("meta");
+            this._renderActiveTabContent();
+          });
+
+          // Wire Chat Event Listeners
+          chatSend.addEventListener("click", () => this._ask());
+          chatInput.addEventListener("keydown", (e) => {
+            if (e.isComposing || e.keyCode === 229) return;
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              this._ask();
+            }
+          });
+        }
+
+        _wireResize() {
+          const divider = this.querySelector("#pt-divider");
+          const chat = this.querySelector("#pt-chat");
+          const rootEl = this.querySelector("#pt-root");
+          if (!divider || !chat || !rootEl) return;
+
+          let isDragging = false;
+          let isHostDragging = false;
+          let startY = 0;
+          let startHeight = 0;
+          let startHostY = 0;
+          let startHostHeight = 0;
+
+          const isNearChatBottom = (e) => {
+            const rect = chat.getBoundingClientRect();
+            return rect && rect.bottom - e.clientY <= 12;
+          };
+
+          const onMouseDown = (e) => {
+            isDragging = true;
+            startY = e.clientY;
+            startHeight = chat.offsetHeight;
+            this.ownerDocument.body.style.userSelect = "none";
+            divider.classList.add("pt-dragging");
+          };
+
+          const onMouseMove = (e) => {
+            if (isHostDragging) {
+              const dy = e.clientY - startHostY;
+              this._applyManualHostHeight(startHostHeight + dy);
+              return;
+            }
+            if (!isDragging) return;
+            const dy = startY - e.clientY;
+            let newHeight = startHeight + dy;
+
+            const parentHeight = rootEl.offsetHeight || 520;
+            const minHeight = 160;
+            const maxHeight = this._getMaxChatHeight(parentHeight, minHeight);
+
+            newHeight = Math.max(minHeight, Math.min(newHeight, maxHeight));
+            rootEl.style.setProperty('--paperflow-chat-height', newHeight + "px");
+
+            try {
+              localStorage.setItem("paperflow-chat-height-v2", String(newHeight));
+            } catch (_) { }
+          };
+
+          const onMouseUp = () => {
+            if (isHostDragging) {
+              isHostDragging = false;
+              this.ownerDocument.body.style.userSelect = "";
+              chat.classList.remove("pt-host-resizing");
+            }
+            if (!isDragging) return;
+            isDragging = false;
+            this.ownerDocument.body.style.userSelect = "";
+            divider.classList.remove("pt-dragging");
+          };
+
+          divider.addEventListener("mousedown", onMouseDown);
+          chat.addEventListener("mousemove", (e) => {
+            if (isDragging || isHostDragging) return;
+            chat.classList.toggle("pt-host-resize-hover", isNearChatBottom(e));
+          });
+          chat.addEventListener("mouseleave", () => {
+            if (!isHostDragging) chat.classList.remove("pt-host-resize-hover");
+          });
+          chat.addEventListener("mousedown", (e) => {
+            if (!isNearChatBottom(e)) return;
+            isHostDragging = true;
+            startHostY = e.clientY;
+            startHostHeight = this.getBoundingClientRect().height || rootEl.offsetHeight || 560;
+            this.ownerDocument.body.style.userSelect = "none";
+            chat.classList.add("pt-host-resizing");
+            e.preventDefault();
+            e.stopPropagation();
+          });
+          this.ownerDocument.defaultView.addEventListener("mousemove", onMouseMove);
+          this.ownerDocument.defaultView.addEventListener("mouseup", onMouseUp);
+
+          // Restore saved height
+          try {
+            const savedHeight = localStorage.getItem("paperflow-chat-height-v2");
+            if (savedHeight) {
+              const h = parseInt(savedHeight, 10);
+              if (Number.isInteger(h) && h >= 160) {
+                const parentHeight = rootEl.offsetHeight || 520;
+                const clamped = Math.max(160, Math.min(h, this._getMaxChatHeight(parentHeight, 160)));
+                rootEl.style.setProperty('--paperflow-chat-height', clamped + "px");
+              } else {
+                this._clampChatHeight();
+              }
+            } else {
+              this._clampChatHeight();
+            }
+          } catch (_) {
+            this._clampChatHeight();
+          }
+        }
+
+        _getMaxChatHeight(containerHeight, minHeight = 160) {
+          const height = Math.max(minHeight, Math.floor(Number(containerHeight) || 0));
+          const reservedContentHeight = 110;
+          const ratioLimit = Math.floor(height * 0.72);
+          const reserveLimit = Math.floor(height - reservedContentHeight);
+          return Math.max(minHeight, Math.min(ratioLimit, reserveLimit));
+        }
+
+        _setActiveTabUI(tabId) {
+          const activeClass = "pt-tab pt-tab-active";
+          const inactiveClass = "pt-tab";
+          this._tabSummary.className = tabId === "summary" ? activeClass : inactiveClass;
+          this._tabTranslation.className = tabId === "translation" ? activeClass : inactiveClass;
+          this._tabMeta.className = tabId === "meta" ? activeClass : inactiveClass;
+        }
+
+        _renderPlaceholderWithButton(container, text, buttonLabel, onClick) {
+          container.textContent = "";
+          container.className = "pt-placeholder-view";
+
+          const wrapper = this.ownerDocument.createElementNS(xhtmlNS, "div");
+          wrapper.className = "pt-placeholder-container";
+
+          const p = this.ownerDocument.createElementNS(xhtmlNS, "p");
+          p.className = "pt-placeholder-text";
+          p.textContent = text;
+
+          const btn = this.ownerDocument.createElementNS(xhtmlNS, "button");
+          btn.setAttribute("type", "button");
+          btn.className = "pt-action-btn";
+          btn.textContent = buttonLabel;
+          btn.addEventListener("click", onClick);
+
+          wrapper.appendChild(p);
+          wrapper.appendChild(btn);
+          container.appendChild(wrapper);
+        }
+
+        _startTranslation() {
+          if (typeof Zotero !== "undefined" && Zotero.PaperTranslator) {
+            const win = Zotero.getMainWindow();
+            Zotero.PaperTranslator.runTranslation(win, this._item)
+              .then(() => {
+                this._loadData();
+              })
+              .catch(err => {
+                PaperFlowReaderSidebar._reportError("translation run failed", err);
+              });
+          } else {
+            PaperFlowReaderSidebar._warn("Zotero.PaperTranslator is not available");
+          }
+        }
+
+        _renderActiveTabContent() {
+          if (!this._bundle) {
+            this._setContent("Loading...");
+            return;
+          }
+
+          const hasBundleData = this._bundle && this._bundle.existing && this._bundle.existing.exists;
+
+          if (this._activeTab === "summary") {
+            if (hasBundleData && this._bundle.noteHTML) {
+              this._renderHTMLContent(this._bundle.noteHTML, "pt-summary-view", "요약 노트가 없습니다.");
+            } else {
+              this._renderPlaceholderWithButton(this._contentArea, "요약 결과가 없습니다.", "Generate Summary", () => this._startTranslation());
+            }
+          } else if (this._activeTab === "translation") {
+            if (hasBundleData && this._bundle.htmlText) {
+              this._renderHTMLContent(this._bundle.htmlText, "pt-translation-view", "전체 번역본이 없습니다.");
+            } else {
+              this._renderPlaceholderWithButton(this._contentArea, "번역 결과가 없습니다.", "Translate Selection", () => this._startTranslation());
+            }
+          } else if (this._activeTab === "meta") {
+            this._renderMetaContent(this._bundle.meta || {});
+          }
+        }
+
+        _setContent(text) {
+          this._contentArea.textContent = text || "";
+          this._contentArea.className = "pt-text-view";
+        }
+
+        _updateItemUI() {
+          if (!this._rendered) return;
+
+          if (!this._item) {
+            this._paperTitle.textContent = "No item selected";
+            this._showStatusBadge("missing", "missing");
+            this._setContent("No item selected");
+            this._disableChat("논문 item을 선택해 주세요.");
+            return;
+          }
+
+          const parent = PaperFlowReaderSidebar._resolveParentItem(this._item);
+          const displayItem = parent || this._item;
+          const title = (displayItem.getDisplayTitle && displayItem.getDisplayTitle())
+            || displayItem.getField?.("title")
+            || `Item #${displayItem.id}`;
+          this._paperTitle.textContent = title;
+
+          this._loadData();
+        }
+
+        _loadData() {
+          const loadSeq = ++this._loadSeq;
+          this._bundle = null;
+
+          this._setStatus("Loading paper data...");
+          this._showStatusBadge("missing", "loading");
+          this._setContent("Loading...");
+
+          this._chatLog.textContent = "";
+          this._appendBubble("assistant", "안녕하세요. 이 논문의 요약과 번역 내용을 바탕으로 답변할 수 있습니다.");
+          this._disableChat("Loading data...");
+
+          const parentItem = PaperFlowReaderSidebar._resolveParentItem(this._item) || this._item;
+
+          if (typeof PTStorage === "undefined" || !PTStorage.loadBundle) {
+            PaperFlowReaderSidebar._warn("PTStorage.loadBundle is unavailable");
+            if (this._loadSeq === loadSeq) {
+              this._setFailure("PTStorage unavailable");
+            }
+            return;
+          }
+
+          PTStorage.loadBundle(parentItem)
+            .then(bundle => {
+              if (this._loadSeq !== loadSeq) return;
+              this._bundle = bundle;
+
+              if (bundle && bundle.existing && bundle.existing.exists) {
+                const status = bundle.existing.status || "partial";
+                const isCompleted = bundle.existing.completed || status === "completed" || status === "done";
+                this._showStatusBadge(isCompleted ? "completed" : "partial", isCompleted ? "completed" : "partial");
+
+                const meta = bundle.meta || {};
+                const total = meta.totalChunks ?? (Array.isArray(meta.chunks) ? meta.chunks.length : null);
+                const done = meta.doneChunks ?? this._countChunks(meta, "done");
+                this._chunkProgress.textContent = (total && Number.isFinite(Number(total)) && Number(total) > 0)
+                  ? `${done || 0}/${total} chunks`
+                  : "";
+
+                this._setStatus("PaperFlow panel ready.");
+
+                this._chatInput.disabled = false;
+                this._chatSend.disabled = false;
+                this._chatLog.textContent = "";
+                this._appendBubble("assistant", "안녕하세요. 이 논문의 요약과 번역 내용을 바탕으로 답변할 수 있습니다.");
+
+                this._renderActiveTabContent();
+              } else {
+                this._showStatusBadge("missing", "missing");
+                this._chunkProgress.textContent = "";
+                this._setStatus("번역 결과가 없습니다.");
+                this._disableChat("번역 결과가 없어 채팅 context를 만들 수 없습니다.");
+                this._renderActiveTabContent();
+              }
+            })
+            .catch(err => {
+              if (this._loadSeq !== loadSeq) return;
+              PaperFlowReaderSidebar._warn("loadBundle failed: " + (err && err.message));
+              this._showStatusBadge("missing", "error");
+              this._chunkProgress.textContent = "";
+              this._setFailure("저장된 결과를 불러오지 못했습니다.", err);
+              this._disableChat("번역 결과를 읽지 못해 채팅을 할 수 없습니다.");
+              this._renderActiveTabContent();
+            });
+        }
+
+        _setStatus(text) {
+          this._statusLine.textContent = text || "";
+        }
+
+        _showStatusBadge(state, label) {
+          this._statusChip.textContent = label;
+          this._statusChip.className = `pt-chip pt-chip-${state}`;
+        }
+
+        _disableChat(message) {
+          this._chatInput.disabled = true;
+          this._chatSend.disabled = true;
+          this._chatLog.textContent = "";
+          this._appendBubble("assistant", message || "채팅을 사용할 수 없습니다.");
+        }
+
+        _setFailure(phase, error) {
+          const detail = error ? `${error.name || "Error"}: ${error.message || String(error)}` : "";
+          this._setStatus(`PaperFlow panel failed to load. ${phase}`);
+          this._setContent(`PaperFlow 결과를 읽지 못했습니다.\n${detail}`);
+        }
+
+        _renderHTMLContent(html, className, emptyMessage) {
+          this._contentArea.textContent = "";
+          this._contentArea.className = className || "";
+
+          try {
+            const cleanHTML = String(html || "").replace(/<!-- PT_META:[\s\S]*?-->/g, "");
+            const doc = new DOMParser().parseFromString(cleanHTML, "text/html");
+
+            doc.querySelectorAll("script, style, iframe, object, embed").forEach(node => node.remove());
+
+            const wrapper = this.ownerDocument.createElementNS(xhtmlNS, "div");
+            wrapper.className = `pt-doc ${className}`;
+
+            this._appendSanitizedChildren(doc.body || doc, wrapper);
+
+            if (!wrapper.textContent.trim()) {
+              wrapper.textContent = emptyMessage || "표시할 내용이 없습니다.";
+            } else if (!this._hasBlockChildren(wrapper)) {
+              wrapper.textContent = this._plainTextWithBreaks(cleanHTML);
+            }
+
+            this._contentArea.appendChild(wrapper);
+          } catch (e) {
+            PaperFlowReaderSidebar._reportError("renderHTMLContent failed", e);
+            this._contentArea.textContent = "HTML 렌더링에 실패했습니다.";
+          }
+        }
+
+        _renderMetaContent(meta) {
+          this._contentArea.textContent = "";
+          this._contentArea.className = "pt-meta-view";
+
+          try {
+            const wrapper = this.ownerDocument.createElementNS(xhtmlNS, "div");
+            wrapper.className = "pt-doc pt-meta-view";
+
+            const table = this.ownerDocument.createElementNS(xhtmlNS, "table");
+            table.className = "pt-meta-summary";
+            const tbody = this.ownerDocument.createElementNS(xhtmlNS, "tbody");
+            table.appendChild(tbody);
+
+            const rows = [
+              ["status", meta.status || this._bundle?.existing?.status || "unknown"],
+              ["completedAt", meta.completedAt || meta.updatedAt || meta.savedAt || ""],
+              ["total chunks", meta.totalChunks ?? meta.chunks?.length ?? ""],
+              ["done chunks", meta.doneChunks ?? this._countChunks(meta, "done")],
+              ["failed chunks", meta.failedChunks ?? this._countChunks(meta, "failed")],
+              ["htmlAttachmentID", meta.htmlAttachmentID || meta.htmlAttachmentId || this._bundle?.existing?.htmlAttachmentID || ""],
+              ["metaAttachmentID", meta.metaAttachmentID || meta.metaAttachmentId || this._bundle?.existing?.metaAttachmentID || ""],
+            ];
+
+            for (const [key, value] of rows) {
+              const tr = this.ownerDocument.createElementNS(xhtmlNS, "tr");
+              const th = this.ownerDocument.createElementNS(xhtmlNS, "th");
+              th.textContent = key;
+              const td = this.ownerDocument.createElementNS(xhtmlNS, "td");
+              td.textContent = (value === "" || value === null || value === undefined) ? "-" : String(value);
+              tr.appendChild(th);
+              tr.appendChild(td);
+              tbody.appendChild(tr);
+            }
+
+            const rawTitle = this.ownerDocument.createElementNS(xhtmlNS, "h2");
+            rawTitle.textContent = "Raw JSON";
+            const pre = this.ownerDocument.createElementNS(xhtmlNS, "pre");
+            pre.className = "pt-raw-json";
+            pre.textContent = JSON.stringify(meta || {}, null, 2) || "{}";
+
+            wrapper.appendChild(table);
+            wrapper.appendChild(rawTitle);
+            wrapper.appendChild(pre);
+
+            this._contentArea.appendChild(wrapper);
+          } catch (e) {
+            PaperFlowReaderSidebar._reportError("renderMetaContent failed", e);
+            this._contentArea.textContent = "Meta 렌더링에 실패했습니다.";
+          }
+        }
+
+        _countChunks(meta, status) {
+          return Array.isArray(meta?.chunks)
+            ? meta.chunks.filter(chunk => chunk && chunk.status === status).length
+            : "";
+        }
+
+        async _ask() {
+          if (this._chatSending) return;
+          const question = (this._chatInput.value || "").trim();
+          if (!question) return;
+
+          this._chatSending = true;
+          this._chatSend.disabled = true;
+
+          this._appendBubble("user", question);
+          const pending = this._appendBubble("assistant", "답변 생성 중...");
+
+          try {
+            if (typeof PTChat === "undefined") throw new Error("PTChat is not loaded.");
+            if (!this._bundle) throw new Error("번역 결과가 없어 채팅 context를 만들 수 없습니다.");
+
+            const parent = PaperFlowReaderSidebar._resolveParentItem(this._item);
+            const title = (parent || this._item)?.getField?.("title") || "제목 없음";
+
+            const answer = await PTChat.ask(question, this._bundle, { title });
+            if (pending) pending.textContent = answer;
+            this._chatInput.value = "";
+          } catch (e) {
+            if (pending) {
+              pending.className = "pt-msg pt-msg-error";
+              pending.textContent = `오류: ${e.message}`;
+            }
+          } finally {
+            this._chatSending = false;
+            this._chatSend.disabled = false;
+          }
+        }
+
+        _appendBubble(role, text) {
+          const div = this.ownerDocument.createElementNS(xhtmlNS, "div");
+          div.className = `pt-msg pt-msg-${role}`;
+          div.textContent = String(text || "");
+          this._chatLog.appendChild(div);
+          this._chatLog.scrollTop = this._chatLog.scrollHeight;
+          return div;
+        }
+
+        _appendSanitizedChildren(source, target) {
+          for (const child of Array.from(source.childNodes || [])) {
+            const sanitized = this._sanitizeNode(child);
+            if (sanitized) target.appendChild(sanitized);
+          }
+        }
+
+        _sanitizeNode(node) {
+          if (node.nodeType === Node.TEXT_NODE) {
+            return this.ownerDocument.createTextNode(node.nodeValue || "");
+          }
+          if (node.nodeType !== Node.ELEMENT_NODE) {
+            return null;
+          }
+
+          const tag = node.localName ? node.localName.toLowerCase() : "";
+          const allowed = new Set([
+            "article", "section", "div", "p", "br", "span",
+            "h1", "h2", "h3", "h4", "h5", "h6",
+            "ul", "ol", "li", "strong", "b", "em", "i",
+            "code", "pre", "blockquote", "table", "thead", "tbody", "tr", "th", "td",
+          ]);
+          const outTag = allowed.has(tag) ? tag : "div";
+          const out = this.ownerDocument.createElementNS(xhtmlNS, outTag);
+
+          const safeClasses = Array.from(node.classList || [])
+            .filter(c => /^(pt-|badge$|partial$|failed$|level-)/.test(c))
+            .join(" ");
+          if (safeClasses) out.setAttribute("class", safeClasses);
+
+          if (node.hasAttribute("id")) {
+            out.setAttribute("id", node.getAttribute("id"));
+          }
+
+          this._appendSanitizedChildren(node, out);
+          return out;
+        }
+
+        _plainTextWithBreaks(html) {
+          return String(html || "")
+            .replace(/<!-- PT_META:[\s\S]*?-->/g, "")
+            .replace(/<\/(h[1-6]|p|div|section|article|li|tr)>/gi, "\n")
+            .replace(/<br\s*\/?>/gi, "\n")
+            .replace(/<[^>]+>/g, " ")
+            .replace(/\n\s+/g, "\n")
+            .replace(/[ \t]{2,}/g, " ")
+            .replace(/\n{3,}/g, "\n\n")
+            .trim() || "표시할 내용이 없습니다.";
+        }
+
+        _hasBlockChildren(node) {
+          return Array.from(node.querySelectorAll("h1,h2,h3,h4,h5,h6,p,section,article,ul,ol,table")).length > 0;
         }
       };
 
@@ -160,45 +987,6 @@ var PaperFlowReaderSidebar = {
     } catch (e) {
       this._warn(`paperflow-reader-panel define failed: ${e.message}`);
       return false;
-    }
-  },
-
-  _logSectionDefinition(definition) {
-    try {
-      const keys = Object.keys(definition || {});
-      const header = definition && definition.header;
-      const sidenav = definition && definition.sidenav;
-      const bodyXHTML = definition && definition.bodyXHTML;
-      const sectionButtons = definition && definition.sectionButtons;
-      this._clog(`section definition: keys=${keys.join(",")} paneID=${definition && definition.paneID} pluginID=${definition && definition.pluginID} headerType=${typeof header} headerValueTypes=${this._objectValueTypes(header)} sidenavType=${typeof sidenav} sidenavValueTypes=${this._objectValueTypes(sidenav)} bodyXHTMLExists=${typeof bodyXHTML === "string"} bodyXHTMLLength=${typeof bodyXHTML === "string" ? bodyXHTML.length : 0} sectionButtons=${this._sectionButtonsSummary(sectionButtons)} onInit=${typeof (definition && definition.onInit) === "function"} onDestroy=${typeof (definition && definition.onDestroy) === "function"} onRender=${typeof (definition && definition.onRender) === "function"} onAsyncRender=${typeof (definition && definition.onAsyncRender) === "function"} onItemChange=${typeof (definition && definition.onItemChange) === "function"}`);
-      if (typeof bodyXHTML === "string") {
-        this._clog(`section definition bodyXHTML preview=${bodyXHTML.slice(0, 1000)}`);
-      }
-    } catch (e) {
-      this._warn(`section definition log failed: ${e.message}`);
-    }
-  },
-
-  _objectValueTypes(object) {
-    try {
-      if (!object || typeof object !== "object") return "";
-      return Object.keys(object).map((key) => `${key}:${typeof object[key]}`).join(",");
-    } catch (_) {
-      return "";
-    }
-  },
-
-  _sectionButtonsSummary(buttons) {
-    try {
-      if (!Array.isArray(buttons)) return "";
-      return buttons.map((button) => {
-        const type = button && button.type;
-        const icon = button && button.icon;
-        const clickType = typeof (button && button.onClick);
-        return `${type || "?"}{icon:${typeof icon},onClick:${clickType}}`;
-      }).join(",");
-    } catch (_) {
-      return "";
     }
   },
 
@@ -255,21 +1043,17 @@ var PaperFlowReaderSidebar = {
       return;
     }
     this._clog(`onRender tabType=${tabType} itemID=${item && item.id != null ? item.id : "none"} bodyConnected=${body.isConnected}`);
-    const renderBodyId = this._markRenderBody(body);
-    const document_ = doc || body.ownerDocument || null;
+
     try {
+      const document_ = doc || body.ownerDocument || null;
       this._ensureReaderPanelElement(document_);
       const panel = body.querySelector ? body.querySelector("paperflow-reader-panel") : null;
-      if (panel) panel.item = item || null;
-      this._clog(`onRender custom-element: panelExists=${!!panel}`);
-      this._logBodyTimelineState("onRender-custom-element", body, renderBodyId, document_);
-      this._logSectionStructureComparison(document_, "onRender-custom-element", body);
+      if (panel) {
+        panel.item = item || null;
+      }
     } catch (e) {
-      this._reportError("onRender diagnostic failed", e);
+      this._reportError("onRender assignment failed", e);
     }
-    // onRender 진단은 유지하되, 삽입/채우기는 하지 않는다.
-    this._scheduleBodyTimelineChecks(body, renderBodyId, document_, "onRender");
-    this._schedulePostRenderChecks(body, renderBodyId, "onRender");
   },
 
   _onToggle(props) {
@@ -289,7 +1073,6 @@ var PaperFlowReaderSidebar = {
     }
   },
 
-  // 단순 scrollIntoView. 섹션 전체 우선.
   _scrollIntoView(targetNode) {
     try {
       const section = this._findSectionNode(targetNode);
@@ -300,703 +1083,6 @@ var PaperFlowReaderSidebar = {
       }
     } catch (e) {
       this._warn(`scrollIntoView failed: ${e.message}`);
-    }
-  },
-
-  _ensureOpen(body) {
-    const section = this._getSectionFromProps({ body });
-    if (!section) {
-      this._clog("ensureOpen: section not found");
-      return;
-    }
-
-    try {
-      this._ensureOpenPref(section.dataset ? section.dataset.pane : null);
-      if (section.hasAttribute && section.hasAttribute("empty")) {
-        section.removeAttribute("empty");
-      }
-      if ("open" in section) {
-        section.open = true;
-      } else if (section.setAttribute) {
-        section.setAttribute("open", "");
-      }
-      const paneID = section.dataset ? section.dataset.pane : "?";
-      this._clog(`ensureOpen: paneID=${paneID} open=${this._isSectionOpen(section)} empty=${section.hasAttribute ? section.hasAttribute("empty") : "?"}`);
-    } catch (e) {
-      this._warn(`ensureOpen failed: ${e.message}`);
-    }
-  },
-
-  // ── post-render 진단 (로그 전용) ──────────────────────────────────────────
-  _schedulePostRenderChecks(body, renderBodyId, phase) {
-    const doc = body.ownerDocument || null;
-    const win = doc && doc.defaultView;
-    if (!win) return;
-    for (const ms of [250, 1000, 2500]) {
-      try {
-        const id = win.setTimeout(() => {
-          try {
-            const section = this._findPaperFlowSection(doc, body);
-            const cur = this._findPaperFlowBody(doc, section, body, renderBodyId);
-            const root = doc && doc.querySelector ? doc.querySelector('[data-paperflow-poc="true"]') : null;
-            const panel = doc && doc.querySelector ? doc.querySelector("paperflow-reader-panel") : null;
-            const rowsEl = doc && doc.querySelector ? doc.querySelector('[data-paperflow-poc-body="true"]') : null;
-            const rowsTextLen = rowsEl ? (rowsEl.textContent || "").length : 0;
-            const rect = section && section.getBoundingClientRect ? section.getBoundingClientRect() : null;
-            const viewportHeight = win && win.innerHeight ? Math.round(win.innerHeight) : "?";
-            const paneID = section && section.dataset ? section.dataset.pane : "?";
-            const sectionOpen = section ? this._isSectionOpen(section) : "?";
-            const markedBody = this._findRenderBodyById(doc, renderBodyId);
-            this._logBodyTimelineState(`${phase || "unknown"}-post-render-${ms}`, body, renderBodyId, doc);
-            this._clog(`post-render check phase=${phase || "unknown"} t=${ms} renderBodyId=${renderBodyId} paneID=${paneID} bodyExists=${!!cur} renderBodyFound=${!!markedBody} panelExists=${!!panel} rootExists=${!!root} rowsTextLen=${rowsTextLen} sectionConnected=${section ? section.isConnected : "?"} sectionLocalName=${section ? section.localName : "?"} sectionCtor=${section && section.constructor ? section.constructor.name : "?"} sectionChildNodes=${section ? section.childNodes.length : "?"} sectionChildren=${section ? section.children.length : "?"} sectionTextLen=${this._textLength(section)} sectionMarkupLen=${this._markupLength(section)} sectionOpen=${sectionOpen} empty=${section ? section.hasAttribute("empty") : "?"} sectionTop=${rect ? Math.round(rect.top) : "?"} sectionHeight=${rect ? Math.round(rect.height) : "?"} viewportHeight=${viewportHeight}`);
-            this._logRootLocation(doc, root, rowsEl);
-            this._logRenderBodyLocation(markedBody);
-            this._logSectionDetails(section, "post-render section");
-            this._logCustomSectionDetails(doc, body);
-            this._logViewportDiagnostics(doc, section, cur);
-            if (ms === 250) {
-              this._logPaperFlowDOMScan(doc, renderBodyId);
-            }
-            if (section && !sectionOpen) {
-              this._warn("PaperFlow section is collapsed; body may be discarded");
-            }
-            // 주의: 여기서는 상태만 관찰한다. off-screen discard는 정상 동작.
-          } catch (e) {
-            this._warn(`post-render check t=${ms} failed: ${e.message}`);
-          }
-        }, ms);
-        this._postRenderTimers.push({ win, id });
-      } catch (_) { /* noop */ }
-    }
-  },
-
-  _scheduleBodyTimelineChecks(body, renderBodyId, doc, phase) {
-    try {
-      const win = (doc && doc.defaultView) || (body && body.ownerDocument && body.ownerDocument.defaultView);
-      if (!win) {
-        this._clog("body timeline schedule skipped: no window");
-        return;
-      }
-
-      const run = (label) => {
-        try {
-          this._logBodyTimelineState(`${phase || "unknown"}-${label}`, body, renderBodyId, doc || body.ownerDocument || null);
-        } catch (e) {
-          this._warn(`body timeline ${label} failed: ${e.message}`);
-        }
-      };
-
-      if (typeof win.queueMicrotask === "function") {
-        win.queueMicrotask(() => run("queueMicrotask"));
-      } else {
-        Promise.resolve().then(() => run("promise-microtask")).catch((e) => {
-          this._warn(`body timeline promise-microtask failed: ${e.message}`);
-        });
-      }
-
-      if (typeof win.requestAnimationFrame === "function") {
-        win.requestAnimationFrame(() => run("requestAnimationFrame"));
-      } else {
-        this._clog("body timeline requestAnimationFrame unavailable");
-      }
-
-      this._logComparisonOuterHTML(doc || body.ownerDocument || null, `${phase || "unknown"}-before-setTimeout-0`, body);
-      win.setTimeout(() => {
-        this._logComparisonOuterHTML(doc || body.ownerDocument || null, `${phase || "unknown"}-setTimeout-0-before-timeline`, body);
-        run("setTimeout-0");
-        this._logComparisonOuterHTML(doc || body.ownerDocument || null, `${phase || "unknown"}-after-setTimeout-0`, body);
-        this._logSectionStructureComparison(doc || body.ownerDocument || null, `${phase || "unknown"}-after-setTimeout-0`, body);
-      }, 0);
-      win.setTimeout(() => run("setTimeout-50"), 50);
-    } catch (e) {
-      this._warn(`body timeline schedule failed: ${e.message}`);
-    }
-  },
-
-  _logBodyTimelineState(label, body, renderBodyId, doc) {
-    try {
-      const document_ = doc || (body && body.ownerDocument) || null;
-      const foundById = this._findRenderBodyById(document_, renderBodyId);
-      const parent = body && body.parentElement ? body.parentElement : null;
-      const rootNode = body && body.getRootNode ? body.getRootNode() : null;
-      const sameObject = !!(foundById && body && foundById === body);
-      this._clog(`body timeline ${label}: renderBodyId=${renderBodyId} bodyObjectExists=${!!body} bodyObjectConnected=${body ? !!body.isConnected : "?"} foundById=${!!foundById} foundByIdSameObject=${sameObject} parentLocalName=${parent ? parent.localName : "null"} parentCtor=${parent && parent.constructor ? parent.constructor.name : "null"} parentDataPane=${this._dataPane(parent)} rootNodeCtor=${rootNode && rootNode.constructor ? rootNode.constructor.name : "null"} childNodes=${body && body.childNodes ? body.childNodes.length : "?"} children=${body && body.children ? body.children.length : "?"} textLen=${this._textLength(body)} innerHTMLLen=${this._innerHTMLLength(body)} outerHTMLPreview=${this._outerHTMLPreview(body)}`);
-      this._logBodyParentChain(label, body);
-    } catch (e) {
-      this._warn(`body timeline ${label} log failed: ${e.message}`);
-    }
-  },
-
-  _logBodyParentChain(label, body) {
-    try {
-      if (!body || !body.parentElement) {
-        this._clog(`body parent chain ${label}: parent=false`);
-        return;
-      }
-      let node = body.parentElement;
-      let depth = 0;
-      while (node && depth < 12) {
-        this._clog(`body parent chain ${label} depth=${depth} localName=${node.localName || "?"} ctor=${node.constructor ? node.constructor.name : "?"} dataPane=${this._dataPane(node)} class=${this._className(node)} childNodes=${node.childNodes ? node.childNodes.length : "?"} children=${node.children ? node.children.length : "?"} textLen=${this._textLength(node)} innerHTMLLen=${this._innerHTMLLength(node)}`);
-        if (node.localName === "collapsible-section") break;
-        node = node.parentElement;
-        depth++;
-      }
-      if (!node) {
-        this._clog(`body parent chain ${label}: reached document root before collapsible-section`);
-      }
-    } catch (e) {
-      this._warn(`body parent chain ${label} failed: ${e.message}`);
-    }
-  },
-
-  _markRenderBody(body) {
-    const renderBodyId = `${Date.now()}-${++this._renderBodySeq}`;
-    this._clog(`renderBodyId local-only=${renderBodyId} bodyConnected=${body ? !!body.isConnected : "?"}`);
-    return renderBodyId;
-  },
-
-  _patchCustomSectionLifecycle(body) {
-    try {
-      const custom = body && body.closest ? body.closest("item-pane-custom-section") : null;
-      if (!custom || custom._paperflowPatched) return;
-
-      const paneID = custom.dataset ? custom.dataset.pane : "";
-      const originalRender = typeof custom.render === "function" ? custom.render : null;
-      if (originalRender) {
-        custom.render = function(...args) {
-          try {
-            PaperFlowReaderSidebar._clog(`custom section render called paneID=${paneID} connected=${!!this.isConnected} hidden=${!!this.hidden}`);
-          } catch (_) { /* noop */ }
-          return originalRender.apply(this, args);
-        };
-      }
-
-      const originalDiscard = typeof custom.discard === "function" ? custom.discard : null;
-      if (originalDiscard) {
-        custom.discard = function(...args) {
-          try {
-            PaperFlowReaderSidebar._clog(`custom section discard called paneID=${paneID} connected=${!!this.isConnected} hidden=${!!this.hidden}`);
-          } catch (_) { /* noop */ }
-          return originalDiscard.apply(this, args);
-        };
-      } else {
-        this._clog(`custom section discard method unavailable paneID=${paneID}`);
-      }
-
-      custom._paperflowPatched = true;
-      this._clog(`custom section lifecycle patched paneID=${paneID} hasRender=${!!originalRender} hasDiscard=${!!originalDiscard}`);
-    } catch (e) {
-      this._warn(`custom section lifecycle patch failed: ${e.message}`);
-    }
-  },
-
-  _findPaperFlowSection(doc, body) {
-    try {
-      if (doc && doc.querySelectorAll) {
-        const sections = Array.from(doc.querySelectorAll("collapsible-section[data-pane]"));
-        const exact = sections.find((node) => this._paneIDEquals(node.dataset && node.dataset.pane));
-        if (exact) return exact;
-        const matched = sections.find((node) => this._matchesPaperFlowPane(node.dataset && node.dataset.pane));
-        if (matched) return matched;
-
-        const customSections = Array.from(doc.querySelectorAll("item-pane-custom-section[data-pane]"));
-        const customExact = customSections.find((node) => this._paneIDEquals(node.dataset && node.dataset.pane));
-        const customMatch = customExact || customSections.find((node) => this._matchesPaperFlowPane(node.dataset && node.dataset.pane));
-        const nested = customMatch && customMatch.querySelector ? customMatch.querySelector("collapsible-section") : null;
-        if (nested) return nested;
-      }
-
-      const closest = this._getSectionFromProps({ body });
-      if (closest && closest.localName === "collapsible-section") return closest;
-      if (closest && closest.querySelector) {
-        const nested = closest.querySelector("collapsible-section");
-        if (nested) return nested;
-      }
-
-      const root = doc && doc.querySelector ? doc.querySelector('[data-paperflow-poc="true"]') : null;
-      if (root) {
-        const rootSection = root.closest("collapsible-section");
-        if (rootSection) return rootSection;
-        const rootCustom = root.closest("item-pane-custom-section");
-        if (rootCustom && rootCustom.querySelector) return rootCustom.querySelector("collapsible-section") || rootCustom;
-      }
-    } catch (e) {
-      this._warn(`findPaperFlowSection failed: ${e.message}`);
-    }
-    return null;
-  },
-
-  _findPaperFlowBody(doc, section, body, renderBodyId) {
-    try {
-      const marked = this._findRenderBodyById(doc, renderBodyId);
-      if (marked) return marked;
-      if (body && body.isConnected) return body;
-
-      const root = doc && doc.querySelector ? doc.querySelector('[data-paperflow-poc="true"]') : null;
-      if (root) {
-        const rootBody = root.closest('[data-type="body"]');
-        if (rootBody) return rootBody;
-      }
-
-      if (section && section.querySelector) {
-        const sectionBody = section.querySelector('[data-type="body"]');
-        if (sectionBody) return sectionBody;
-      }
-
-      if (doc && doc.querySelectorAll) {
-        const customSections = Array.from(doc.querySelectorAll("item-pane-custom-section[data-pane]"));
-        const custom = customSections.find((node) => this._matchesPaperFlowPane(node.dataset && node.dataset.pane));
-        if (custom && custom.querySelector) {
-          return custom.querySelector('[data-type="body"]');
-        }
-      }
-    } catch (e) {
-      this._warn(`findPaperFlowBody failed: ${e.message}`);
-    }
-    return null;
-  },
-
-  _findRenderBodyById(doc, renderBodyId) {
-    return null;
-  },
-
-  _logRootLocation(doc, root, rowsEl) {
-    try {
-      const directRoot = doc && doc.querySelector ? doc.querySelector('[data-paperflow-poc="true"]') : null;
-      const directRows = doc && doc.querySelector ? doc.querySelector('[data-paperflow-poc-body="true"]') : null;
-      const actualRoot = root || directRoot;
-      const actualRows = rowsEl || directRows;
-      if (!actualRoot) {
-        this._clog("paperflow root location: found=false");
-        return;
-      }
-      const rootSection = actualRoot.closest("collapsible-section");
-      const rootCustom = actualRoot.closest("item-pane-custom-section");
-      this._clog(`paperflow root location: found=true root=${this._describeNode(actualRoot)} rowsTextLen=${this._textLength(actualRows)} closestSectionPane=${this._dataPane(rootSection)} closestCustomPane=${this._dataPane(rootCustom)}`);
-    } catch (e) {
-      this._warn(`paperflow root location log failed: ${e.message}`);
-    }
-  },
-
-  _logRenderBodyLocation(markedBody) {
-    try {
-      if (!markedBody) {
-        this._clog("renderBodyId location: found=false");
-        return;
-      }
-      this._clog(`renderBodyId location: found=true body=${this._describeNode(markedBody)}`);
-    } catch (e) {
-      this._warn(`renderBodyId location log failed: ${e.message}`);
-    }
-  },
-
-  _logSectionDetails(section, label) {
-    try {
-      if (!section) {
-        this._clog(`${label}: found=false`);
-        return;
-      }
-      const rootNode = section.getRootNode ? section.getRootNode() : null;
-      const parent = section.parentElement || null;
-      const previous = section.previousElementSibling || null;
-      const next = section.nextElementSibling || null;
-      this._clog(`${label}: found=true ${this._describeNode(section)} rootNodeCtor=${rootNode && rootNode.constructor ? rootNode.constructor.name : "?"} shadowRoot=${!!section.shadowRoot} parent=${this._nodeShort(parent)} previous=${this._nodeShort(previous)} next=${this._nodeShort(next)}`);
-    } catch (e) {
-      this._warn(`${label} detail log failed: ${e.message}`);
-    }
-  },
-
-  _logCustomSectionDetails(doc, body) {
-    try {
-      const custom = this._findCustomSection(doc, body);
-      if (!custom) {
-        this._clog("custom section details: found=false");
-        return;
-      }
-      this._clog(`custom section details: found=true ${this._describeNode(custom)} hiddenProp=${!!custom.hidden} renderFn=${typeof custom.render === "function"} asyncRenderFn=${typeof custom.asyncRender === "function"} discardFn=${typeof custom.discard === "function"}`);
-    } catch (e) {
-      this._warn(`custom section detail log failed: ${e.message}`);
-    }
-  },
-
-  _logViewportDiagnostics(doc, section, bodyNode) {
-    try {
-      if (!doc || !doc.defaultView || !section || !section.getBoundingClientRect) {
-        this._clog("intersection diagnostics: unavailable");
-        return;
-      }
-      const win = doc.defaultView;
-      const sectionRect = section.getBoundingClientRect();
-      const custom = this._findCustomSection(doc, bodyNode || section);
-      const customRect = custom && custom.getBoundingClientRect ? custom.getBoundingClientRect() : null;
-      const scroller = this._findPaneScroller(section);
-      const scrollerRect = scroller && scroller.getBoundingClientRect ? scroller.getBoundingClientRect() : null;
-      const viewportRect = { top: 0, bottom: win.innerHeight || 0, height: win.innerHeight || 0 };
-      const rootRect = scrollerRect || viewportRect;
-      const sectionVisible = sectionRect.bottom > rootRect.top && sectionRect.top < rootRect.bottom;
-      const customVisible = customRect ? (customRect.bottom > rootRect.top && customRect.top < rootRect.bottom) : "?";
-      const centerX = Math.max(0, Math.round(sectionRect.left + Math.max(1, sectionRect.width || 1) / 2));
-      const centerY = Math.max(0, Math.round(sectionRect.top + Math.max(1, sectionRect.height || 1) / 2));
-      const pointNode = doc.elementFromPoint ? doc.elementFromPoint(centerX, centerY) : null;
-      this._clog(`intersection diagnostics: sectionRect=${this._rectObject(sectionRect)} customRect=${customRect ? this._rectObject(customRect) : "?"} scroller=${this._nodeShort(scroller)} scrollerRect=${scrollerRect ? this._rectObject(scrollerRect) : "?"} viewportHeight=${Math.round(viewportRect.height)} sectionVisible=${sectionVisible} customVisible=${customVisible} elementFromCenter=${this._nodeShort(pointNode)}`);
-    } catch (e) {
-      this._warn(`intersection diagnostics failed: ${e.message}`);
-    }
-  },
-
-  _findCustomSection(doc, node) {
-    try {
-      if (node && node.closest) {
-        const closest = node.closest("item-pane-custom-section");
-        if (closest && this._matchesPaperFlowPane(closest.dataset && closest.dataset.pane)) return closest;
-      }
-      if (doc && doc.querySelectorAll) {
-        const customSections = Array.from(doc.querySelectorAll("item-pane-custom-section[data-pane]"));
-        return customSections.find((candidate) => this._paneIDEquals(candidate.dataset && candidate.dataset.pane))
-          || customSections.find((candidate) => this._matchesPaperFlowPane(candidate.dataset && candidate.dataset.pane))
-          || null;
-      }
-    } catch (_) { /* noop */ }
-    return null;
-  },
-
-  _findPaneScroller(node) {
-    try {
-      if (!node || !node.closest) return null;
-      return node.closest("#zotero-view-item")
-        || node.closest(".zotero-view-item")
-        || node.closest("item-details")
-        || node.closest("context-pane");
-    } catch (_) {
-      return null;
-    }
-  },
-
-  _logPaperFlowDOMScan(doc, renderBodyId) {
-    try {
-      if (!doc || !doc.querySelectorAll) {
-        this._clog("PaperFlow DOM scan: document unavailable");
-        return;
-      }
-      const nodes = this._collectPaperFlowNodes(doc);
-      this._clog(`PaperFlow DOM scan: renderBodyId=${renderBodyId} nodes=${nodes.length}`);
-      nodes.forEach((node, index) => {
-        this._clog(`PaperFlow DOM scan node[${index}]: ${this._describeNode(node)} parent=${this._nodeShort(node.parentElement)}`);
-      });
-    } catch (e) {
-      this._warn(`PaperFlow DOM scan failed: ${e.message}`);
-    }
-  },
-
-  _logSectionStructureComparison(doc, label, body) {
-    try {
-      if (!doc || !doc.querySelectorAll) {
-        this._clog(`section structure comparison ${label}: document unavailable`);
-        return;
-      }
-      const paperflow = this._findComparisonNodes(doc, "paperflow", body);
-      const zpt = this._findComparisonNodes(doc, "zoteropdftranslate", body);
-      const paperflowPanel = doc.querySelector ? doc.querySelector("paperflow-reader-panel") : null;
-      this._clog(`section structure comparison ${label}: paperflowCustom=${!!paperflow.custom} paperflowCollapsible=${!!paperflow.collapsible} paperflowPanel=${!!paperflowPanel} zoteropdftranslateCustom=${!!zpt.custom} zoteropdftranslateCollapsible=${!!zpt.collapsible}`);
-      this._logOneSectionStructure(label, "PaperFlow", paperflow.custom, paperflow.collapsible);
-      this._logOneSectionStructure(label, "zoteropdftranslate", zpt.custom, zpt.collapsible);
-    } catch (e) {
-      this._warn(`section structure comparison ${label} failed: ${e.message}`);
-    }
-  },
-
-  _logComparisonOuterHTML(doc, label, body) {
-    try {
-      if (!doc || !doc.querySelectorAll) {
-        this._clog(`comparison outerHTML ${label}: document unavailable`);
-        return;
-      }
-      const paperflow = this._findComparisonNodes(doc, "paperflow", body);
-      const zpt = this._findComparisonNodes(doc, "zoteropdftranslate", body);
-      this._clog(`comparison outerHTML ${label} PaperFlow collapsible found=${!!paperflow.collapsible} preview=${this._outerHTMLPreviewLimit(paperflow.collapsible, 2000)}`);
-      this._clog(`comparison outerHTML ${label} zoteropdftranslate collapsible found=${!!zpt.collapsible} preview=${this._outerHTMLPreviewLimit(zpt.collapsible, 2000)}`);
-    } catch (e) {
-      this._warn(`comparison outerHTML ${label} failed: ${e.message}`);
-    }
-  },
-
-  _findComparisonNodes(doc, kind, body) {
-    const result = { custom: null, collapsible: null };
-    try {
-      if (kind === "paperflow") {
-        result.custom = this._findCustomSection(doc, body);
-        result.collapsible = this._findPaperFlowSection(doc, body);
-      } else {
-        result.custom = this._findZoteroPDFTranslateCustomSection(doc);
-        result.collapsible = this._findZoteroPDFTranslateCollapsibleSection(doc, result.custom);
-      }
-      if (!result.collapsible && result.custom && result.custom.querySelector) {
-        result.collapsible = result.custom.querySelector("collapsible-section");
-      }
-      if (!result.custom && result.collapsible && result.collapsible.closest) {
-        result.custom = result.collapsible.closest("item-pane-custom-section");
-      }
-    } catch (e) {
-      this._warn(`find comparison nodes failed kind=${kind}: ${e.message}`);
-    }
-    return result;
-  },
-
-  _findZoteroPDFTranslateCustomSection(doc) {
-    try {
-      const customSections = Array.from(doc.querySelectorAll("item-pane-custom-section"));
-      return customSections.find((node) => this._matchesZoteroPDFTranslateNode(node)) || null;
-    } catch (_) {
-      return null;
-    }
-  },
-
-  _findZoteroPDFTranslateCollapsibleSection(doc, custom) {
-    try {
-      if (custom && custom.querySelector) {
-        const nested = custom.querySelector("collapsible-section");
-        if (nested) return nested;
-      }
-      const sections = Array.from(doc.querySelectorAll("collapsible-section"));
-      return sections.find((node) => this._matchesZoteroPDFTranslateNode(node)) || null;
-    } catch (_) {
-      return null;
-    }
-  },
-
-  _matchesZoteroPDFTranslateNode(node) {
-    try {
-      if (!node) return false;
-      const terms = ["zoteropdftranslate", "zotero-pdf-translate", "pdftranslate", "pdf-translate"];
-      const dataPane = (this._dataPane(node) || "").toLowerCase();
-      const l10n = (this._l10nID(node) || "").toLowerCase();
-      const cls = (this._className(node) || "").toLowerCase();
-      const text = (node.textContent || "").toLowerCase();
-      return terms.some((term) => dataPane.includes(term) || l10n.includes(term) || cls.includes(term) || text.includes(term));
-    } catch (_) {
-      return false;
-    }
-  },
-
-  _logOneSectionStructure(label, name, custom, collapsible) {
-    try {
-      this._clog(`section structure ${label} ${name} custom found=${!!custom} childNodes=${custom && custom.childNodes ? custom.childNodes.length : "?"} children=${custom && custom.children ? custom.children.length : "?"} outerHTML1500=${this._outerHTMLPreviewLimit(custom, 1500)}`);
-      this._logDirectChildren(label, `${name} custom`, custom);
-      this._clog(`section structure ${label} ${name} collapsible found=${!!collapsible} childNodes=${collapsible && collapsible.childNodes ? collapsible.childNodes.length : "?"} children=${collapsible && collapsible.children ? collapsible.children.length : "?"} outerHTML1500=${this._outerHTMLPreviewLimit(collapsible, 1500)}`);
-      this._logDirectChildren(label, `${name} collapsible`, collapsible);
-      this._logSelectorComparison(label, name, custom, collapsible);
-    } catch (e) {
-      this._warn(`section structure ${label} ${name} failed: ${e.message}`);
-    }
-  },
-
-  _logDirectChildren(label, name, node) {
-    try {
-      if (!node || !node.childNodes) {
-        this._clog(`section children ${label} ${name}: node=false`);
-        return;
-      }
-      Array.from(node.childNodes).forEach((child, index) => {
-        this._clog(`section children ${label} ${name} index=${index} ${this._childNodeSummary(child)}`);
-      });
-    } catch (e) {
-      this._warn(`section children ${label} ${name} failed: ${e.message}`);
-    }
-  },
-
-  _logSelectorComparison(label, name, custom, collapsible) {
-    const selectors = [
-      '[data-type="body"]',
-      ".body",
-      ".content",
-      ".section-body",
-      "[slot]",
-      "[hidden]",
-      "[data-pane]",
-      "paperflow-reader-panel",
-    ];
-    for (const selector of selectors) {
-      try {
-        const customMatches = this._queryWithinIncludingSelf(custom, selector);
-        const collapsibleMatches = this._queryWithinIncludingSelf(collapsible, selector);
-        this._clog(`section selector ${label} ${name} selector=${selector} customCount=${customMatches.length} customFirst=${this._nodeShort(customMatches[0])} collapsibleCount=${collapsibleMatches.length} collapsibleFirst=${this._nodeShort(collapsibleMatches[0])}`);
-      } catch (e) {
-        this._warn(`section selector ${label} ${name} selector=${selector} failed: ${e.message}`);
-      }
-    }
-  },
-
-  _queryWithinIncludingSelf(node, selector) {
-    const matches = [];
-    try {
-      if (!node) return matches;
-      if (node.matches && node.matches(selector)) matches.push(node);
-      if (node.querySelectorAll) {
-        for (const child of node.querySelectorAll(selector)) matches.push(child);
-      }
-    } catch (_) { /* noop */ }
-    return matches;
-  },
-
-  _childNodeSummary(node) {
-    if (!node) return "node=null";
-    return [
-      `localName=${node.localName || "?"}`,
-      `ctor=${node.constructor ? node.constructor.name : "?"}`,
-      `namespaceURI=${node.namespaceURI || ""}`,
-      `dataType=${node.getAttribute ? (node.getAttribute("data-type") || "") : ""}`,
-      `dataPane=${this._dataPane(node)}`,
-      `class=${this._className(node)}`,
-      `extraButtons=${node.getAttribute ? (node.getAttribute("extra-buttons") || "") : ""}`,
-      `styleAttr=${node.getAttribute ? (node.getAttribute("style") || "") : ""}`,
-      `textLen=${this._textLength(node)}`,
-      `innerHTMLLen=${this._innerHTMLLength(node)}`,
-    ].join(" ");
-  },
-
-  _collectPaperFlowNodes(doc) {
-    const nodes = new Set();
-    const addAll = (selector, filter) => {
-      try {
-        for (const node of doc.querySelectorAll(selector)) {
-          if (!filter || filter(node)) nodes.add(node);
-        }
-      } catch (_) { /* noop */ }
-    };
-    addAll('[data-pane*="paperflow"]');
-    addAll('[data-l10n-id*="paperflow"]');
-    addAll("[data-paperflow-poc]");
-    addAll("[data-paperflow-poc-body]");
-    addAll("paperflow-reader-panel");
-    addAll("item-pane-custom-section");
-    addAll("collapsible-section[data-pane]", (node) => this._matchesPaperFlowPane(node.dataset && node.dataset.pane));
-    return Array.from(nodes);
-  },
-
-  _describeNode(node) {
-    if (!node) return "null";
-    const rect = this._rectSummary(node);
-    const style = this._styleSummary(node);
-    return [
-      `localName=${node.localName || "?"}`,
-      `ctor=${node.constructor ? node.constructor.name : "?"}`,
-      `dataPane=${this._dataPane(node)}`,
-      `l10n=${this._l10nID(node)}`,
-      `class=${node.getAttribute ? (node.getAttribute("class") || "") : ""}`,
-      `extraButtons=${node.getAttribute ? (node.getAttribute("extra-buttons") || "") : ""}`,
-      `connected=${!!node.isConnected}`,
-      `hiddenAttr=${node.hasAttribute ? node.hasAttribute("hidden") : "?"}`,
-      `hiddenProp=${"hidden" in node ? !!node.hidden : "?"}`,
-      `childNodes=${node.childNodes ? node.childNodes.length : "?"}`,
-      `children=${node.children ? node.children.length : "?"}`,
-      `textLen=${this._textLength(node)}`,
-      `markupLen=${this._markupLength(node)}`,
-      `rect=${rect}`,
-      `style=${style}`,
-      `renderFn=${typeof node.render === "function"}`,
-      `asyncRenderFn=${typeof node.asyncRender === "function"}`,
-      `discardFn=${typeof node.discard === "function"}`,
-      `shadowRoot=${!!node.shadowRoot}`,
-    ].join(" ");
-  },
-
-  _nodeShort(node) {
-    if (!node) return "null";
-    return `${node.localName || "?"}[dataPane=${this._dataPane(node)} class=${node.getAttribute ? (node.getAttribute("class") || "") : ""} extraButtons=${node.getAttribute ? (node.getAttribute("extra-buttons") || "") : ""}]`;
-  },
-
-  _rectSummary(node) {
-    try {
-      if (!node || !node.getBoundingClientRect) return "n/a";
-      const rect = node.getBoundingClientRect();
-      return `top:${Math.round(rect.top)},height:${Math.round(rect.height)}`;
-    } catch (_) {
-      return "n/a";
-    }
-  },
-
-  _rectObject(rect) {
-    if (!rect) return "?";
-    return `top:${Math.round(rect.top)},bottom:${Math.round(rect.bottom)},height:${Math.round(rect.height)}`;
-  },
-
-  _styleSummary(node) {
-    try {
-      if (!node || !node.ownerDocument || !node.ownerDocument.defaultView) return "n/a";
-      const style = node.ownerDocument.defaultView.getComputedStyle(node);
-      return `display:${style.display},visibility:${style.visibility}`;
-    } catch (_) {
-      return "n/a";
-    }
-  },
-
-  _textLength(node) {
-    try {
-      return node ? (node.textContent || "").length : 0;
-    } catch (_) {
-      return 0;
-    }
-  },
-
-  _markupLength(node) {
-    try {
-      if (!node) return 0;
-      const prop = "inner" + "HTML";
-      return (node[prop] || "").length;
-    } catch (_) {
-      return 0;
-    }
-  },
-
-  _innerHTMLLength(node) {
-    try {
-      return node && typeof node.innerHTML === "string" ? node.innerHTML.length : 0;
-    } catch (_) {
-      return 0;
-    }
-  },
-
-  _outerHTMLPreview(node) {
-    try {
-      if (!node || typeof node.outerHTML !== "string") return "";
-      return node.outerHTML.slice(0, 500).replace(/\s+/g, " ");
-    } catch (_) {
-      return "";
-    }
-  },
-
-  _outerHTMLPreviewLimit(node, limit) {
-    try {
-      if (!node || typeof node.outerHTML !== "string") return "";
-      return node.outerHTML.slice(0, limit || 500).replace(/\s+/g, " ");
-    } catch (_) {
-      return "";
-    }
-  },
-
-  _className(node) {
-    try {
-      if (!node) return "";
-      if (node.getAttribute) return node.getAttribute("class") || "";
-      return String(node.className || "");
-    } catch (_) {
-      return "";
-    }
-  },
-
-  _dataPane(node) {
-    try {
-      return node && node.dataset ? (node.dataset.pane || "") : "";
-    } catch (_) {
-      return "";
-    }
-  },
-
-  _l10nID(node) {
-    try {
-      return node && node.dataset ? (node.dataset.l10nId || "") : "";
-    } catch (_) {
-      return "";
     }
   },
 
@@ -1043,34 +1129,10 @@ var PaperFlowReaderSidebar = {
       || paneID.endsWith(`-${this.PANE_ID}`);
   },
 
-  _paneIDEquals(paneID) {
-    return !!paneID && !!this._registeredPaneID && paneID === this._registeredPaneID;
-  },
-
-  _isSectionOpen(section) {
-    if (!section) return false;
-    try {
-      if ("open" in section) return !!section.open;
-      return section.hasAttribute && section.hasAttribute("open");
-    } catch (_) {
-      return false;
-    }
-  },
-
-  _clearPostRenderChecks() {
-    if (!this._postRenderTimers || !this._postRenderTimers.length) return;
-    for (const t of this._postRenderTimers) {
-      try { t.win.clearTimeout(t.id); } catch (_) { /* noop */ }
-    }
-    this._postRenderTimers = [];
-  },
-
   _ensureOpenPref(paneID) {
     try {
       const id = paneID || this._registeredPaneID;
       if (!id || typeof Zotero === "undefined" || !Zotero.Prefs) return;
-      // Source-confirmed Zotero key:
-      // collapsibleSection.js saves/restores `panes.${dataset.pane}.open`.
       const key = `panes.${id}.open`;
       if (Zotero.Prefs.get(key) === true) {
         this._clog(`open pref already true: ${key}`);
@@ -1090,12 +1152,10 @@ var PaperFlowReaderSidebar = {
       let order = current
         ? current.split(",").map((id) => id.trim()).filter(Boolean)
         : this.DEFAULT_SIDENAV_ORDER.slice();
-      
-      // 기존에 맨 앞(unshift)에 위치했던 값을 필터링하고 맨 뒤로 새로 밀어넣기 위해
-      // PANE_ID와 registeredPaneID를 모두 제거한 뒤 push합니다.
+
       order = order.filter((id) => id !== this.PANE_ID && id !== this._registeredPaneID);
       order.push(this._registeredPaneID);
-      
+
       Zotero.Prefs.set("sidenav.order", order.join(","));
       this._clog(`sidenav.order updated (moved to bottom): ${this._registeredPaneID}`);
     } catch (e) {
@@ -1191,9 +1251,9 @@ var PaperFlowReaderSidebar = {
   // ── 로깅 (Error Console에서도 보이게) ─────────────────────────────────────
   _clog(msg) {
     const text = `[PaperFlow] ${msg}`;
-    try { Zotero.debug(text); } catch (_) {}
+    try { Zotero.debug(text); } catch (_) { }
     try { Services.console.logStringMessage(text); }
-    catch (_) { try { Components.utils.reportError(text); } catch (__) {} }
+    catch (_) { try { Components.utils.reportError(text); } catch (__) { } }
   },
 
   _log(msg) {
@@ -1212,7 +1272,7 @@ var PaperFlowReaderSidebar = {
 
   _reportError(label, error) {
     const detail = `[PaperFlow] readerSidebar ${label}: ${error && error.stack ? error.stack : (error && error.message) || String(error)}`;
-    try { Zotero.debug(detail); } catch (_) {}
-    try { Components.utils.reportError(detail); } catch (_) {}
+    try { Zotero.debug(detail); } catch (_) { }
+    try { Components.utils.reportError(detail); } catch (_) { }
   },
 };

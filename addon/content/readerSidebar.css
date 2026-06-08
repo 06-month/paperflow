@@ -4,61 +4,12 @@
  * `icon` option; this sheet only overrides the icon CSS variables for the
  * active/hover states. Registered as a USER sheet so `!important` overrides
  * the inline `--custom-sidenav-icon-light/dark` declaration Zotero sets.
- *
- * TODO: replace the 24px PNGs with dedicated 16x16 (header) and 20x20
- *       (sidenav) assets, plus @2x variants, once finalized.
  */
-/* Defense-in-depth: keep the right sidenav button icon-only. The primary fix
- * is in paperflow.ftl (sidenav message is attribute-only `.tooltiptext`, so no
- * textContent is set). This rule, scoped strictly to our own pane, hides any
- * stray label/text child should Zotero ever wrap the label in an element.
- * Never affects other Zotero sidenav buttons.
- */
-.btn[data-pane$="paperflow-reader"] > label,
-.btn[data-pane$="paperflow-reader"] > span,
-.btn[data-pane$="paperflow-reader"] > .label,
-.btn[data-pane$="paperflow-reader"] > .toolbarbutton-text {
+.btn[data-pane$="paperflow-reader"]>label,
+.btn[data-pane$="paperflow-reader"]>span,
+.btn[data-pane$="paperflow-reader"]>.label,
+.btn[data-pane$="paperflow-reader"]>.toolbarbutton-text {
   display: none !important;
-}
-
-/* PoC diagnostic box styling (bodyXHTML skeleton). Class names are unique to
- * PaperFlow, so these rules don't touch other Zotero panes.
- * TODO: remove the debug blue border when the real sidebar UI lands.
- */
-.paperflow-reader-poc-root {
-  display: block;
-  padding: 12px;
-  margin: 8px 0;
-  border: 2px solid #0052ff;
-  border-radius: 12px;
-  background: #ffffff;
-  color: #0a0b0d;
-  font-size: 13px;
-  line-height: 1.5;
-}
-.paperflow-reader-poc-title {
-  font-weight: 600;
-  font-size: 14px;
-  margin-bottom: 8px;
-  color: #0052ff;
-}
-.paperflow-reader-poc-note {
-  margin-top: 10px;
-  color: #7c828a;
-  font-size: 12px;
-}
-.paperflow-reader-poc-row {
-  display: flex;
-  gap: 8px;
-  margin: 3px 0;
-}
-.paperflow-reader-poc-key {
-  min-width: 150px;
-  color: #7c828a;
-}
-.paperflow-reader-poc-val {
-  color: #1f2328;
-  overflow-wrap: anywhere;
 }
 
 .btn[data-pane$="paperflow-reader"]:hover,
@@ -69,4 +20,729 @@
 .pin-wrapper.pinned .btn[data-pane$="paperflow-reader"] {
   --custom-sidenav-icon-light: url('chrome://paperflow/content/icons/paperflow-sidebar-blue-24.png') !important;
   --custom-sidenav-icon-dark: url('chrome://paperflow/content/icons/paperflow-sidebar-blue-24.png') !important;
+}
+
+/* ── Design tokens (from getdesign.md — Coinbase system) ─────────────────── */
+:root {
+  /* Surface */
+  --pf-canvas: #ffffff;
+  --pf-surface-soft: #f7f7f7;
+  --pf-surface-strong: #eef0f3;
+  /* Text */
+  --pf-ink: #0a0b0d;
+  --pf-body: #5b616e;
+  --pf-muted: #7c828a;
+  --pf-on-primary: #ffffff;
+  /* Hairline */
+  --pf-hairline: #dee1e6;
+  --pf-hairline-soft: #eef0f3;
+  /* Accent — single brand color, used scarcely */
+  --pf-primary: #0052ff;
+  --pf-primary-active: #003ecc;
+  --pf-primary-disabled: #a8b8cc;
+  /* Semantic (text color only) */
+  --pf-up: #05b169;
+  --pf-down: #cf202f;
+  /* Radius */
+  --pf-r-xs: 4px;
+  --pf-r-sm: 8px;
+  --pf-r-md: 12px;
+  --pf-r-lg: 16px;
+  --pf-r-xl: 24px;
+  --pf-r-pill: 100px;
+  /* Spacing (4px base) */
+  --pf-xxs: 4px;
+  --pf-xs: 8px;
+  --pf-sm: 12px;
+  --pf-base: 16px;
+  --pf-md: 20px;
+  --pf-lg: 24px;
+  --pf-xl: 32px;
+  /* Type */
+  --pf-font: Inter, -apple-system, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --pf-mono: "JetBrains Mono", "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+paperflow-reader-panel {
+  display: block;
+  min-height: 560px;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+collapsible-section[data-pane$="paperflow-reader"][open] > [data-type="body"] {
+  min-height: 560px;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+collapsible-section[data-pane$="paperflow-reader"][open] > [data-type="body"] > paperflow-reader-panel {
+  height: 100%;
+}
+
+/* ── Root column (Adapted for Sidebar) ───────────────────────────────────── */
+#pt-root {
+  display: flex;
+  flex-direction: column;
+  /* 실제 host(reader pane) 높이에 맞춤. 100vh는 pane보다 커서 chat이 보이는
+     영역 아래로 밀리는 원인이므로 100%로. */
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  padding: 10px 12px;
+  gap: 8px;
+  box-sizing: border-box;
+  background: var(--pf-surface-soft);
+  color: var(--pf-ink);
+  font-family: var(--pf-font);
+  --paperflow-chat-height: 180px;
+}
+
+/* ── Main Layout Workspace ────────────────────────────────────────────────── */
+#pt-main {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* 빈 회색 공간 방지: padding-bottom 없이 flex로 content/divider/chat가 높이를
+     모두 분배하도록 둔다. */
+  padding-bottom: 0;
+  box-sizing: border-box;
+}
+
+#pt-root * {
+  box-sizing: border-box;
+}
+
+/* ── Header ──────────────────────────────────────────────────────────────── */
+#pt-header {
+  flex: 0 0 auto;
+}
+
+#pt-brandrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#pt-brand {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  color: var(--pf-primary);
+}
+
+/* status chip — badge-pill geometry */
+.pt-chip {
+  font-family: var(--pf-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: var(--pf-r-pill);
+  background: var(--pf-surface-strong);
+  color: var(--pf-body);
+}
+
+.pt-chip-completed {
+  color: var(--pf-up);
+  background: rgba(5, 177, 105, 0.10);
+}
+
+.pt-chip-partial {
+  color: #9a6a00;
+  background: rgba(244, 176, 0, 0.14);
+}
+
+.pt-chip-missing {
+  color: var(--pf-muted);
+  background: var(--pf-surface-strong);
+}
+
+.pt-chunk {
+  font-family: var(--pf-mono);
+  font-size: 10px;
+  color: var(--pf-muted);
+  margin-left: auto;
+}
+
+#pt-paper-title {
+  margin: 4px 0 2px;
+  font-size: 15px;
+  /* Compact title size for sidebar */
+  font-weight: 500;
+  letter-spacing: -0.3px;
+  line-height: 1.35;
+  color: var(--pf-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pt-status-line {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--pf-muted);
+}
+
+/* ── Tabs (pill) ─────────────────────────────────────────────────────────── */
+#pt-tabs {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.pt-tab {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: var(--pf-r-pill);
+  background: var(--pf-surface-strong);
+  color: var(--pf-body);
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.pt-tab:hover {
+  background: #e4e7ec;
+}
+
+.pt-tab-active,
+.pt-tab-active:hover {
+  background: var(--pf-primary);
+  color: var(--pf-on-primary);
+  border-color: var(--pf-primary);
+}
+
+/* ── Content card (the only vertical scroller) ───────────────────────────── */
+#pt-content {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border: 1px solid var(--pf-hairline);
+  border-radius: var(--pf-r-lg);
+  background: var(--pf-canvas);
+  padding: 12px 14px;
+  color: var(--pf-body);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  -moz-user-select: text !important;
+  user-select: text !important;
+}
+
+#pt-content .pt-doc,
+#pt-content .pt-doc *,
+#pt-content .pt-meta-summary,
+#pt-content .pt-meta-summary *,
+#pt-content .pt-raw-json,
+#pt-content .pt-text-view {
+  -moz-user-select: text !important;
+  user-select: text !important;
+}
+
+#pt-content .pt-action-btn,
+#pt-content button,
+#pt-content input,
+#pt-content textarea,
+#pt-content select {
+  -moz-user-select: none !important;
+  user-select: none !important;
+}
+
+#pt-content::-webkit-scrollbar,
+#pt-chat-log::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+#pt-content::-webkit-scrollbar-track,
+#pt-chat-log::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+#pt-content::-webkit-scrollbar-thumb,
+#pt-chat-log::-webkit-scrollbar-thumb {
+  background: #dee1e6;
+  border-radius: 10px;
+}
+
+#pt-content::-webkit-scrollbar-thumb:hover,
+#pt-chat-log::-webkit-scrollbar-thumb:hover {
+  background: #a8acb3;
+}
+
+.pt-text-view {
+  color: var(--pf-muted);
+  font-size: 12px;
+}
+
+.pt-doc {
+  max-width: 100%;
+}
+
+.pt-doc h1,
+.pt-doc h2,
+.pt-doc h3,
+.pt-doc h4,
+.pt-doc h5,
+.pt-doc h6 {
+  margin: 16px 0 6px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.2px;
+  color: var(--pf-ink);
+}
+
+.pt-doc h1 {
+  margin-top: 0;
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.3px;
+}
+
+.pt-doc h2 {
+  font-size: 13.5px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--pf-hairline-soft);
+}
+
+.pt-doc h3 {
+  font-size: 12.5px;
+}
+
+.pt-doc p,
+.pt-doc div,
+.pt-doc section,
+.pt-doc li {
+  line-height: 1.6;
+}
+
+.pt-doc p {
+  margin: 8px 0 10px;
+}
+
+.pt-doc section {
+  margin: 10px 0 14px;
+}
+
+.pt-doc ul,
+.pt-doc ol {
+  margin: 6px 0 10px 18px;
+  padding: 0;
+}
+
+.pt-doc li {
+  margin: 3px 0;
+}
+
+.pt-doc strong,
+.pt-doc b {
+  font-weight: 600;
+  color: var(--pf-ink);
+}
+
+/* section summary / translation blocks */
+.pt-summary-view .pt-summary,
+.pt-translation-view .pt-summary {
+  border-left: 3px solid var(--pf-primary);
+  background: #f5f8ff;
+  border-radius: 0 var(--pf-r-sm) var(--pf-r-sm) 0;
+  padding: 8px 10px;
+  margin: 10px 0;
+}
+
+.pt-translation-view .pt-translation {
+  margin: 8px 0 14px;
+  white-space: pre-wrap;
+}
+
+.pt-translation-view .pt-original {
+  color: var(--pf-muted);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+/* ── Meta (key/value card + raw json) ────────────────────────────────────── */
+.pt-meta-summary {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  margin-bottom: 14px;
+  border: 1px solid var(--pf-hairline);
+  border-radius: var(--pf-r-md);
+  overflow: hidden;
+}
+
+.pt-meta-summary th,
+.pt-meta-summary td {
+  border-bottom: 1px solid var(--pf-hairline-soft);
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+  font-size: 11.5px;
+}
+
+.pt-meta-summary tr:last-child th,
+.pt-meta-summary tr:last-child td {
+  border-bottom: none;
+}
+
+.pt-meta-summary th {
+  width: 100px;
+  color: var(--pf-muted);
+  font-weight: 600;
+  background: var(--pf-surface-soft);
+}
+
+.pt-meta-summary td {
+  color: var(--pf-ink);
+  font-family: var(--pf-mono);
+}
+
+.pt-raw-json {
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  border: 1px solid var(--pf-hairline);
+  border-radius: var(--pf-r-md);
+  background: var(--pf-surface-soft);
+  padding: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--pf-mono);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--pf-ink);
+}
+
+.pt-meta-view h2 {
+  font-size: 12px;
+  font-weight: 600;
+  margin: 4px 0 6px;
+  color: var(--pf-ink);
+}
+
+/* ── Chat (bottom assistant box) ─────────────────────────────────────────── */
+#pt-chat {
+  display: flex;
+  /* flex-basis만 사용 (height와 flex 동시 지정 금지). */
+  flex: 0 0 var(--paperflow-chat-height, 180px);
+  min-height: 160px;
+  max-height: 72%;
+  flex-direction: column;
+  gap: var(--pf-xxs);
+  overflow: hidden;
+  border: 1px solid var(--pf-hairline);
+  border-radius: var(--pf-r-xl);
+  background: var(--pf-canvas);
+  padding: 8px 10px 10px;
+  box-sizing: border-box;
+  position: relative;
+}
+
+#pt-chat::after {
+  content: "";
+  position: absolute;
+  left: 42px;
+  right: 42px;
+  bottom: 3px;
+  height: 7px;
+  border-bottom: 2px solid rgba(124, 130, 138, 0.35);
+  border-radius: 999px;
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+#pt-chat.pt-host-resize-hover,
+#pt-chat.pt-host-resizing {
+  cursor: ns-resize;
+}
+
+#pt-chat.pt-host-resize-hover::after,
+#pt-chat.pt-host-resizing::after {
+  border-bottom-color: var(--pf-primary);
+  opacity: 0.9;
+}
+
+#pt-chat-head {
+  display: none !important;
+}
+
+#pt-chat-log {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-xxs);
+  padding: 2px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--pf-ink);
+}
+
+/* chat message bubbles */
+.pt-msg {
+  max-width: 90%;
+  border-radius: var(--pf-r-lg);
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.pt-msg-assistant {
+  align-self: flex-start;
+  background: var(--pf-surface-soft);
+  border: 1px solid var(--pf-hairline-soft);
+  color: var(--pf-ink);
+  border-bottom-left-radius: 4px;
+}
+
+.pt-msg-user {
+  align-self: flex-end;
+  background: #eef4ff;
+  border: 1px solid #d7e3ff;
+  color: var(--pf-ink);
+  border-bottom-right-radius: 4px;
+}
+
+.pt-msg-error {
+  align-self: flex-start;
+  background: rgba(207, 32, 47, 0.06);
+  border: 1px solid rgba(207, 32, 47, 0.25);
+  color: var(--pf-down);
+  border-bottom-left-radius: 4px;
+}
+
+/* ── Composer (modern assistant input) ───────────────────────────────────── */
+.pt-chat-composer {
+  flex: 0 0 auto;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--pf-hairline);
+  border-radius: 16px;
+  background: var(--pf-canvas);
+  padding: 7px 9px;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.pt-chat-composer:focus-within {
+  border-color: var(--pf-primary);
+  box-shadow: 0 0 0 2px rgba(0, 82, 255, 0.12);
+}
+
+#pt-chat-input {
+  width: 100%;
+  height: 42px;
+  min-height: 42px;
+  max-height: 72px;
+  resize: none;
+  border: 0;
+  background: transparent;
+  color: var(--pf-ink);
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+#pt-chat-input::placeholder {
+  color: var(--pf-muted);
+}
+
+#pt-chat-input:disabled {
+  color: var(--pf-muted);
+  cursor: not-allowed;
+}
+
+.pt-composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pt-composer-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-xxs);
+}
+
+.pt-icon-btn {
+  appearance: none;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--pf-hairline);
+  border-radius: var(--pf-r-pill);
+  background: var(--pf-surface-soft);
+  color: var(--pf-muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.pt-icon-btn:hover:not(:disabled) {
+  background: var(--pf-surface-strong);
+  color: var(--pf-body);
+}
+
+.pt-icon-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.pt-send-btn {
+  appearance: none;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--pf-r-pill);
+  background: var(--pf-primary);
+  color: var(--pf-on-primary);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.pt-send-btn:hover:not(:disabled) {
+  background: var(--pf-primary-active);
+}
+
+.pt-send-btn:disabled {
+  background: var(--pf-surface-strong);
+  color: var(--pf-muted);
+  cursor: not-allowed;
+}
+
+@keyframes pf-pulse {
+  0% {
+    opacity: 0.6;
+  }
+
+  50% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0.6;
+  }
+}
+
+.pf-msg-loading {
+  font-style: italic;
+  color: var(--pf-muted);
+  animation: pf-pulse 1.5s infinite ease-in-out;
+}
+
+.pt-placeholder-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 40px var(--pf-base);
+  height: 100%;
+}
+
+.pt-placeholder-text {
+  font-family: var(--pf-font);
+  font-size: 13px;
+  color: var(--pf-body);
+  margin: 0 0 16px 0;
+}
+
+.pt-action-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  padding: 0 20px;
+  border: none;
+  border-radius: var(--pf-r-pill);
+  background: var(--pf-primary);
+  color: var(--pf-on-primary);
+  font-family: var(--pf-font);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease-in-out;
+}
+
+.pt-action-btn:hover:not(:disabled) {
+  background: var(--pf-primary-active);
+}
+
+.pt-action-btn:disabled {
+  background: var(--pf-primary-disabled);
+  cursor: not-allowed;
+}
+
+/* Hide brand logo icon on top-left of the panel body */
+#pt-brand::before {
+  display: none !important;
+  content: none !important;
+}
+
+/* Hide header icon in the collapsible section header to keep it clean */
+collapsible-section[data-pane*="paperflow-reader"] .icon,
+collapsible-section[data-pane*="paperflow-reader"] image,
+collapsible-section[data-pane*="paperflow-reader"] img,
+collapsible-section[data-pane*="paperflow-reader"]::part(icon) {
+  display: none !important;
+}
+
+.pt-divider {
+  flex: 0 0 6px;
+  height: 6px;
+  min-height: 6px;
+  background: var(--pf-hairline);
+  cursor: row-resize;
+  margin: 3px 0;
+  border-radius: 2px;
+  position: relative;
+  transition: background 0.15s ease-in-out;
+}
+
+.pt-divider:hover,
+.pt-divider.pt-dragging {
+  background: var(--pf-primary);
+}
+
+.pt-divider::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 24px;
+  height: 2px;
+  background: var(--pf-muted);
+  border-radius: 1px;
+  transition: background 0.15s ease-in-out;
+}
+
+.pt-divider:hover::after,
+.pt-divider.pt-dragging::after {
+  background: var(--pf-on-primary);
 }

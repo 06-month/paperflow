@@ -109,11 +109,11 @@ class PaperTranslatorAddon {
   }
 
   // ── 메인 번역 실행 ────────────────────────────────────────────────────────
-  async runTranslation(win) {
+  async runTranslation(win, itemInput = null) {
     PTLogger.info("번역 시작 요청");
 
     // 1. 선택된 item 확인
-    const selectedItem = PTItemResolver.getSelectedItem();
+    const selectedItem = itemInput || PTItemResolver.getSelectedItem();
     if (!selectedItem) {
       this._alert(win, "번역할 논문을 선택해주세요.");
       return;
@@ -174,7 +174,14 @@ class PaperTranslatorAddon {
     PTLogger.info(`번역 대상: "${title}"`);
 
     // 5. progress 창 열기
-    const progressWin = this._openProgressWindow(win, title);
+    const progressWin = this._openProgressWindow(win, title, () => {
+      PTJobQueue.cancel();
+    });
+    const assertNotCancelled = () => {
+      if (progressWin.isCancelled()) {
+        throw new PTError("번역이 취소되었습니다.", "CANCELLED");
+      }
+    };
 
     const startedAt = new Date().toISOString();
 
@@ -182,16 +189,19 @@ class PaperTranslatorAddon {
       // Phase 3: 텍스트 추출
       progressWin.update("PDF 텍스트 추출 중...", 0);
       const rawText = await PTExtractor.extract(pdfAttachment);
+      assertNotCancelled();
 
       // Phase 4: 정제
       progressWin.update("텍스트 정제 중...", 5);
       const cleanText = PTCleaner.clean(rawText, {
         skipReferences: PTPrefs.isSkipReferences(),
       });
+      assertNotCancelled();
 
       // Phase 5: 섹션 트리
       progressWin.update("섹션 분석 중...", 10);
       const sections = PTSectionizer.sectionize(cleanText);
+      assertNotCancelled();
 
       // Phase 6: chunking
       progressWin.update("청킹 중...", 15);
@@ -203,6 +213,10 @@ class PaperTranslatorAddon {
       // Phase 7~8: queue 번역
       await PTJobQueue.run(jobs, {
         onProgress: (done, total, lastJob, isSectionBoundary) => {
+          if (progressWin.isCancelled()) {
+            PTJobQueue.cancel();
+            return;
+          }
           const pct = 20 + Math.floor((done / total) * 75);
           progressWin.update(`번역 중... ${done}/${total}`, pct);
           if (lastJob?.heading) {
@@ -210,6 +224,7 @@ class PaperTranslatorAddon {
           }
         },
         onComplete: async (finishedJobs) => {
+          assertNotCancelled();
           // Phase 9: 저장
           progressWin.update("저장 중...", 96);
           try {
@@ -235,6 +250,12 @@ class PaperTranslatorAddon {
           PTLogger.info("번역 파이프라인 완료");
         },
         onError: (err) => {
+          if (this._isCancelError(err)) {
+            PTLogger.info("번역이 사용자 요청으로 취소됨");
+            progressWin.update("취소됨", 100);
+            progressWin.setDone(false, { cancelled: true });
+            return;
+          }
           PTLogger.error(`큐 오류: ${err.message}`);
           progressWin.update(`오류: ${err.message}`, 100);
           progressWin.setDone(false);
@@ -242,6 +263,12 @@ class PaperTranslatorAddon {
       });
 
     } catch (e) {
+      if (this._isCancelError(e)) {
+        PTLogger.info("번역이 사용자 요청으로 취소됨");
+        progressWin.update("취소됨", 100);
+        progressWin.setDone(false, { cancelled: true });
+        return;
+      }
       PTLogger.error(`파이프라인 오류: ${e.message}`);
       progressWin.update(`오류: ${e.message}`, 100);
       progressWin.setDone(false);
@@ -366,17 +393,20 @@ class PaperTranslatorAddon {
   }
 
   // ── Progress 창 ───────────────────────────────────────────────────────────
-  _openProgressWindow(win, title) {
+  _openProgressWindow(win, title, onCancel) {
     // Zotero 내장 ProgressWindow 사용
     const pw = new Zotero.ProgressWindow({ closeOnClick: false });
     pw.changeHeadline("PaperFlow");
     pw.addDescription(`"${title.slice(0, 60)}${title.length > 60 ? "..." : ""}"`);
 
     const item = new pw.ItemProgress(
-      "chrome://zotero/skin/tick.png",
+      null,
       "준비 중..."
     );
     pw.show();
+
+    let cancelled = false;
+    let finished = false;
 
     const safeCall = (label, fn) => {
       try {
@@ -387,49 +417,165 @@ class PaperTranslatorAddon {
       }
     };
 
+    const styleIndicator = (pct, state) => this._styleProgressIndicator(item, pct, state);
+
+    const requestCancel = (reason) => {
+      if (finished || cancelled) return;
+      cancelled = true;
+      PTLogger.info(`번역 취소 요청: ${reason || "progress-window"}`);
+      safeCall("cancel callback", () => {
+        if (typeof onCancel === "function") onCancel();
+      });
+      safeCall("cancel text", () => {
+        if (typeof item.setText === "function") {
+          item.setText("취소 요청됨... 현재 chunk가 끝나면 중단됩니다.");
+        }
+      });
+      styleIndicator(100, "cancelled");
+    };
+
+    this._attachProgressCancelControls(win, requestCancel, () => finished);
+    styleIndicator(0, "running");
+
     return {
       update(msg, pct) {
+        const safePct = Number.isFinite(Number(pct)) ? Math.max(0, Math.min(100, Math.round(Number(pct)))) : 0;
         safeCall("setProgress", () => {
-          if (typeof item.setProgress === "function") {
-            item.setProgress(pct || 0);
-          } else {
-            PTLogger.warn("Progress UI setProgress unavailable");
-          }
+          // Zotero's built-in circular progress sprite is visually noisy here.
+          // Keep progress as text + a custom static indicator instead.
+          styleIndicator(safePct, "running");
         });
         safeCall("setText", () => {
           if (typeof item.setText === "function") {
-            item.setText(msg);
+            item.setText(`${safePct}% · ${msg}`);
           } else {
             PTLogger.warn("Progress UI setText unavailable");
           }
         });
-        PTLogger.info(`[진행] ${pct}% — ${msg}`);
+        PTLogger.info(`[진행] ${safePct}% — ${msg}`);
       },
-      setDone(success) {
-        const icon = success
-          ? "chrome://zotero/skin/tick.png"
-          : "chrome://zotero/skin/cross.png";
-        safeCall("setIcon", () => {
-          if (typeof item.setIcon === "function") {
-            item.setIcon(icon);
-          } else {
-            PTLogger.warn("Progress UI setIcon unavailable");
+      setDone(success, options = {}) {
+        finished = true;
+        const state = success ? "success" : (options.cancelled ? "cancelled" : "error");
+        safeCall("setDoneStyle", () => {
+          if (!success && !options.cancelled && typeof item.setError === "function") {
+            item.setError();
           }
+          styleIndicator(100, state);
         });
         safeCall("startCloseTimer", () => {
           if (typeof pw.startCloseTimer === "function") {
-            pw.startCloseTimer(success ? 4000 : 8000);
+            pw.startCloseTimer(success ? 4000 : (options.cancelled ? 3500 : 8000));
           } else {
             PTLogger.warn("Progress UI startCloseTimer unavailable");
           }
         });
       },
+      isCancelled() {
+        return cancelled;
+      },
     };
+  }
+
+  _styleProgressIndicator(item, pct, state) {
+    const image = item && item._image;
+    if (!image) return;
+    const safePct = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+    const color = state === "success"
+      ? "#05b169"
+      : (state === "error" ? "#cf202f" : (state === "cancelled" ? "#7c828a" : "#0052ff"));
+    const bg = state === "running"
+      ? `linear-gradient(to top, ${color} ${safePct}%, #d7e3ff ${safePct}%)`
+      : color;
+    image.className = "";
+    image.style.width = "8px";
+    image.style.height = "18px";
+    image.style.minWidth = "8px";
+    image.style.marginRight = "8px";
+    image.style.borderRadius = "999px";
+    image.style.background = bg;
+    image.style.backgroundImage = bg;
+    image.style.backgroundRepeat = "no-repeat";
+    image.style.backgroundSize = "100% 100%";
+    image.style.border = "1px solid rgba(0, 82, 255, 0.18)";
+    image.style.boxSizing = "border-box";
+  }
+
+  _attachProgressCancelControls(win, requestCancel, isFinished) {
+    const attach = (triesLeft = 20) => {
+      let progressWindow = null;
+      try {
+        const wins = Services.wm.getEnumerator("alert:alert");
+        while (wins.hasMoreElements()) {
+          const candidate = wins.getNext();
+          if (candidate && candidate.opener === win && candidate.document?.getElementById("zotero-progress")) {
+            progressWindow = candidate;
+          }
+        }
+      } catch (_) { /* noop */ }
+
+      if (!progressWindow || !progressWindow.document?.getElementById("zotero-progress-text-box")) {
+        if (triesLeft > 0) {
+          win.setTimeout(() => attach(triesLeft - 1), 100);
+        }
+        return;
+      }
+
+      const doc = progressWindow.document;
+      const box = doc.getElementById("zotero-progress-text-box");
+      if (!box || doc.getElementById("paperflow-progress-cancel")) return;
+
+      try {
+        progressWindow.addEventListener("close", () => {
+          if (!isFinished()) requestCancel("window-close");
+        }, { once: true });
+        progressWindow.addEventListener("unload", () => {
+          if (!isFinished()) requestCancel("window-unload");
+        }, { once: true });
+      } catch (_) { /* noop */ }
+
+      try {
+        const row = doc.createXULElement("hbox");
+        row.setAttribute("class", "zotero-progress-item-hbox");
+        row.setAttribute("align", "center");
+        row.style.marginTop = "6px";
+
+        const spacer = doc.createXULElement("spacer");
+        spacer.setAttribute("flex", "1");
+
+        const cancelButton = doc.createXULElement("button");
+        cancelButton.id = "paperflow-progress-cancel";
+        cancelButton.setAttribute("label", "× Cancel");
+        cancelButton.setAttribute("tooltiptext", "PaperFlow 번역을 취소합니다.");
+        cancelButton.style.minHeight = "24px";
+        cancelButton.style.padding = "2px 10px";
+        cancelButton.addEventListener("command", () => requestCancel("cancel-button"));
+
+        row.appendChild(spacer);
+        row.appendChild(cancelButton);
+        box.appendChild(row);
+        progressWindow.sizeToContent();
+      } catch (e) {
+        PTLogger.warn(`Progress cancel control attach failed: ${e.message}`);
+      }
+    };
+
+    try {
+      win.setTimeout(() => attach(), 0);
+    } catch (_) {
+      attach();
+    }
   }
 
   _shortErrorMessage(err) {
     const msg = err?.message || "알 수 없는 오류";
     return msg.length > 100 ? `${msg.slice(0, 97)}...` : msg;
+  }
+
+  _isCancelError(err) {
+    return err?.code === "CANCELLED"
+      || /취소/.test(err?.message || "")
+      || /cancel/i.test(err?.message || "");
   }
 
   _errorDetail(err) {

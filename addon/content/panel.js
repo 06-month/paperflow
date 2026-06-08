@@ -48,6 +48,7 @@ window.PTPanel = {
       await this._runPhase("setup chat", () => {
         this._wireBasicTabs();
         this._wireChatStub();
+        this._wireResize();
       });
     } catch (e) {
       this._setFailure("startup", e);
@@ -330,6 +331,72 @@ window.PTPanel = {
     // trimming, and context merging with the Zotero paper bundle).
   },
 
+  _wireResize() {
+    const divider = this._el("pt-divider");
+    const chat = this._el("pt-chat");
+    const rootEl = this._el("pt-root");
+    if (!divider || !chat || !rootEl) return;
+
+    let isDragging = false;
+    let startY = 0;
+    let startHeight = 0;
+
+    const onMouseDown = (e) => {
+      isDragging = true;
+      startY = e.clientY;
+      startHeight = chat.offsetHeight;
+      document.body.style.userSelect = "none";
+      divider.classList.add("pt-dragging");
+    };
+
+    const onMouseMove = (e) => {
+      if (!isDragging) return;
+      const dy = startY - e.clientY;
+      let newHeight = startHeight + dy;
+      
+      const parentHeight = rootEl.offsetHeight || window.innerHeight;
+      const minHeight = 170;
+      const maxHeight = Math.floor(parentHeight * 0.45);
+
+      newHeight = Math.max(minHeight, Math.min(newHeight, maxHeight));
+      rootEl.style.setProperty('--paperflow-chat-height', newHeight + "px");
+
+      try {
+        localStorage.setItem("paperflow-chat-height", String(newHeight));
+      } catch (_) {}
+    };
+
+    const onMouseUp = () => {
+      if (!isDragging) return;
+      isDragging = false;
+      document.body.style.userSelect = "";
+      divider.classList.remove("pt-dragging");
+    };
+
+    divider.addEventListener("mousedown", onMouseDown);
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+
+    // Restore saved height
+    try {
+      const savedHeight = localStorage.getItem("paperflow-chat-height");
+      if (savedHeight) {
+        const h = parseInt(savedHeight, 10);
+        if (Number.isInteger(h) && h >= 170) {
+          const parentHeight = rootEl.offsetHeight || window.innerHeight;
+          const clamped = Math.max(170, Math.min(h, Math.floor(parentHeight * 0.45)));
+          rootEl.style.setProperty('--paperflow-chat-height', clamped + "px");
+        } else {
+          rootEl.style.setProperty('--paperflow-chat-height', "210px");
+        }
+      } else {
+        rootEl.style.setProperty('--paperflow-chat-height', "210px");
+      }
+    } catch (_) {
+      rootEl.style.setProperty('--paperflow-chat-height', "210px");
+    }
+  },
+
   _renderSummary() {
     this._setActiveTab("pt-tab-summary");
     if (this.unavailableMessage) {
@@ -560,19 +627,12 @@ window.PTPanel = {
   // JS layout fallback: guarantee #pt-content has a bounded height so it
   // scrolls internally even if XUL/HTML flex height does not propagate.
   _layout() {
+    // Pure CSS flexbox handles all layout and scrolling.
     const content = this._el("pt-content");
-    if (!content) return;
-    const header = this._el("pt-header");
-    const tabs = this._el("pt-tabs");
-    const chat = this._el("pt-chat");
-    const viewport = window.innerHeight || 720;
-    const used = (header ? header.offsetHeight : 0)
-      + (tabs ? tabs.offsetHeight : 0)
-      + (chat ? chat.offsetHeight : 0);
-    // root padding (20*2) + 3 gaps (12*3) ≈ 76px of chrome
-    const available = viewport - used - 76;
-    content.style.height = Math.max(180, available) + "px";
-    content.style.overflowY = "auto";
+    if (content) {
+      content.style.height = "";
+      content.style.overflowY = "auto";
+    }
   },
 
   _renderHeader() {
