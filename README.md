@@ -1,238 +1,428 @@
 # PaperFlow
-
-**AI-assisted paper reading inside Zotero Reader.**
-
-**PaperFlow is an AI-assisted Zotero Reader sidebar for paper summarization, translation, metadata inspection, and paper-context-aware chat.**
-
-PaperFlow brings an AI reading layer directly into Zotero Reader. It allows researchers to inspect summaries, translations, processing metadata, and ask paper-specific questions without leaving their literature management environment.
-
-PaperFlow is not intended to be just a simple translator. It is an experimental, work-in-progress Zotero-native research reading assistant for reading, understanding, translating, inspecting, and asking questions about papers inside the Zotero workflow.
-
+<p align="center">
+  <strong>AI-assisted paper reading inside Zotero Reader.</strong>
+</p>
+<p align="center">
+  Summarize, translate, inspect metadata, and ask paper-specific questions without leaving Zotero.
+</p>
+<p align="center">
+  <img alt="Status" src="https://img.shields.io/badge/status-experimental-orange">
+  <img alt="Zotero" src="https://img.shields.io/badge/Zotero-Reader%20Plugin-blue">
+  <img alt="AI" src="https://img.shields.io/badge/AI-Gemini-7c3aed">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
+</p>
+---
 ## Overview
-
-Research reading often involves too much context switching: PDF viewers, translation tools, LLM chats, note-taking apps, Notion, external web apps, and Zotero itself. PaperFlow is designed to reduce that friction by keeping the paper and its AI-assisted reading layer in the same place.
-
-Instead of copying passages out of Zotero into external tools, a researcher can open a paper in Zotero Reader and use the PaperFlow sidebar to review generated summaries, inspect translations, check processing metadata, and ask questions about the current paper.
-
-The intended workflow is:
-
+**PaperFlow** is an AI-assisted Zotero Reader sidebar for paper summarization, translation, metadata inspection, and paper-context-aware chat.
+It brings an AI reading layer directly into Zotero Reader, allowing researchers to review generated summaries, inspect translations, check processing metadata, and ask paper-specific questions without switching between PDF viewers, translators, LLM chat windows, note-taking apps, or external web tools.
+PaperFlow is not designed as a generic translator. It is an experimental, work-in-progress attempt to build a **Zotero-native research assistant** for academic reading workflows.
 ```text
-Read -> summarize -> translate -> inspect metadata -> ask follow-up questions
-```
+Read → Summarize → Translate → Inspect → Ask
 
-## Why PaperFlow?
+⸻
 
-PaperFlow is built around research workflow integration rather than generic web translation.
+Preview
 
-- **Zotero-native interaction**: keep the paper, generated artifacts, and AI assistant close to the Reader UI.
-- **Artifact reuse**: load previously generated summaries, translations, and metadata instead of reprocessing the same paper.
-- **Chunk-level processing**: make long-document processing more trackable, inspectable, and debuggable.
-- **Paper-specific context**: ask questions against the current paper's generated context rather than an isolated chat prompt.
-- **Research-oriented reading**: support literature review, paper triage, and deep reading workflows.
-- **Long-term source alignment**: evolve toward translation and explanation workflows that remain connected to the original PDF context.
+<p align="center">
+  <img src="docs/assets/paperflow-reader-sidebar.png" alt="PaperFlow Zotero Reader Sidebar" width="960">
+</p>
 
-## Current Features
+If the preview image is not available in your local clone, it can be added later under docs/assets/paperflow-reader-sidebar.png.
 
-PaperFlow is experimental, but the current implementation includes the following core capabilities.
+⸻
 
-### Native Zotero Reader Sidebar Integration
+Why PaperFlow?
 
-- Works inside the Zotero Reader / item pane.
-- Keeps the paper, summary, translation, metadata, and AI assistant in one place.
-- Reduces context switching during paper reading.
+Research reading is rarely a single-window task. A typical workflow often involves:
 
-### Paper-Specific Views
+* reading the PDF in Zotero,
+* copying passages into a translator,
+* asking questions in an LLM chat,
+* saving notes somewhere else,
+* returning to Zotero,
+* and repeating the same process for the next paper.
 
-- **Summary tab**: displays the generated paper summary.
-- **Translation tab**: displays the generated translation result.
-- **Meta tab**: displays processing metadata, chunk status, attachment IDs, and completion status.
+PaperFlow reduces this friction by keeping the paper and its AI-assisted reading context inside the same Zotero Reader environment.
 
-### Chunk-Based Processing
+Read	Translate	Inspect	Ask
+Stay inside Zotero Reader	View generated translations	Check chunk status and artifacts	Ask questions using paper context
 
-- Long papers are processed in chunks.
-- The UI can show progress such as completed chunks / total chunks.
-- Chunk metadata makes long-document processing more trackable and debuggable.
+Core Design Goals
 
-### Reuse of Generated Artifacts
+* Zotero-native interaction
+    Keep the PDF, generated artifacts, and AI assistant close to the Reader UI.
+* Artifact reuse
+    Load existing summaries, translations, and metadata instead of reprocessing the same paper.
+* Chunk-level processing
+    Make long-document processing more trackable, inspectable, and debuggable.
+* Paper-specific context
+    Ask questions against the current paper’s generated context rather than an isolated chat prompt.
+* Annotation-aware future direction
+    Build toward translation, explanation, and highlighting workflows that remain connected to the original PDF.
 
-- Previously generated summary, translation, and metadata can be loaded again.
-- Completed results can be detected to avoid unnecessary reprocessing.
-- Outputs are associated with the Zotero item / attachment workflow.
+⸻
+
+Current Features
+
+PaperFlow is experimental, but the current implementation already supports a Zotero-native reading workflow.
+
+Feature	Description	Status
+Zotero Reader sidebar	Sidebar integration inside Zotero Reader / item pane	Implemented
+Summary view	Displays generated paper summaries	Implemented
+Translation view	Displays generated translation artifacts	Implemented
+Meta view	Shows chunk progress, artifact IDs, and completion state	Implemented
+Chunk-based processing	Processes long papers in smaller chunks	Implemented
+Artifact reuse	Reloads generated notes, translations, and metadata	Implemented
+Gemini chat	Embedded paper-context-aware chat panel	Experimental
+Source-aligned translation	Map translations back to original PDF spans	Planned
+Zotero highlight integration	Create highlights from translated passages	Planned
+Attachment-aware chat	Attach supplementary materials to paper context	Planned
+
+⸻
+
+Zotero Reader Sidebar Integration
+
+PaperFlow adds a dedicated sidebar section inside the Zotero Reader / item pane.
+
+The sidebar is designed to keep the following in one place:
+
+* the current paper,
+* generated summary,
+* generated translation,
+* processing metadata,
+* and paper-context-aware chat.
+
+This reduces context switching while reading papers.
+
+⸻
+
+Paper-Specific Views
+
+PaperFlow organizes generated results into three views.
+
+View	Purpose
+Summary	Displays the generated paper summary
+Translation	Displays the generated translation artifact
+Meta	Shows processing metadata, chunk status, attachment IDs, and completion state
+
+This separation keeps the UI focused: quick understanding, full translation, and debugging/inspection are not mixed into one long page.
+
+⸻
+
+Chunk-Based Processing
+
+Long papers are processed in chunks.
+
+This makes the pipeline easier to:
+
+* track,
+* resume,
+* inspect,
+* debug,
+* and reason about when model/API limits are involved.
+
+The sidebar can show progress such as:
+
+14 / 14 chunks
+completed
+
+Generated metadata is stored so that processing state can be inspected later.
+
+⸻
+
+Artifact Reuse
+
+PaperFlow is designed to reuse previously generated outputs.
+
+Instead of retranslating a paper every time it is opened, PaperFlow can load existing generated artifacts associated with the Zotero item.
 
 Current generated artifacts include:
 
-- `[PaperFlow]` note
-- `translated.ko.html`
-- `pt-meta.json`
+[PaperFlow] note
+translated.ko.html
+pt-meta.json
 
-### Context-Aware Gemini Chat
+This makes PaperFlow closer to a persistent research workflow tool rather than a one-off prompt wrapper.
 
-- A Gemini chat panel is embedded in the PaperFlow sidebar.
-- The chat is intended to answer questions based on the current paper's generated summary and translation context.
-- Useful for asking about contributions, method details, experiments, limitations, related work, and confusing passages.
+⸻
 
-### Researcher-Oriented Workflow
+Gemini-Based Translation and Chat
 
-- Designed for academic reading rather than generic web translation.
-- Suitable for literature review, paper triage, and deep reading.
-- Keeps generated reading artifacts inside the Zotero item context.
+PaperFlow uses Gemini for translation and paper-context-aware chat.
 
-## How It Works
+The embedded chat panel is intended to answer questions grounded in the current paper’s generated context.
 
-At a high level, PaperFlow processes a selected Zotero paper as follows:
+Example questions:
+
+What is the main contribution of this paper?
+How is this method different from prior work?
+What does the ablation study prove?
+What are the limitations?
+Explain this method section more simply.
+
+The goal is not to replace reading, but to make difficult papers easier to inspect, question, and revisit.
+
+At the time of writing, the Gemini API provides a free tier with daily usage limits, making it possible to test PaperFlow without setting up paid billing immediately.
+
+⸻
+
+How It Works
+
+At a high level, PaperFlow follows this pipeline:
+
+flowchart LR
+    A[Zotero Item / PDF] --> B[Text Extraction]
+    B --> C[Text Cleaning]
+    C --> D[Section Splitting]
+    D --> E[Chunking]
+    E --> F[Gemini Translation]
+    F --> G[Zotero Artifacts]
+    G --> H[Reader Sidebar]
+    H --> I[Summary / Translation / Meta / Chat]
+
+Plain text version:
+
+Zotero item / PDF
+        ↓
+PDF text extraction
+        ↓
+Text cleaning
+        ↓
+Section splitting
+        ↓
+Chunking
+        ↓
+Gemini translation
+        ↓
+Generated artifacts
+        ↓
+Zotero-linked storage
+        ↓
+Reader sidebar display
+        ↓
+Paper-context-aware chat
+
+More concretely:
 
 1. Resolve the selected Zotero parent item or PDF attachment.
-2. Extract text from the selected PDF.
-3. Clean the extracted text.
+2. Extract text from the PDF.
+3. Clean and normalize the extracted text.
 4. Split the paper into sections.
 5. Split long sections into chunks.
 6. Translate chunks with Gemini.
 7. Save generated outputs as Zotero-linked artifacts.
-8. Load the summary, translation, and metadata into the PaperFlow sidebar.
+8. Load summary, translation, and metadata into the Reader sidebar.
 9. Use generated paper context for sidebar chat.
 
-The chunk-based architecture is designed to make long papers easier to process, resume, inspect, and debug.
+⸻
 
-## Current Status
+Current Status
 
-PaperFlow is a work-in-progress Zotero plugin targeting Zotero 9.x, with local testing focused on Zotero 9.0.3.
+PaperFlow is currently a work-in-progress Zotero plugin.
+
+It is suitable for development, testing, and iterative research-tooling experiments, but it should not yet be considered production-stable.
 
 Current status:
 
-- Installable Zotero plugin package.
-- Manual translation trigger through Zotero's Tools menu.
-- Native Reader / item-pane sidebar integration.
-- Summary, Translation, and Meta views.
-- Gemini API key preference UI and connection test.
-- Gemini-based translation and paper-context chat.
-- Zotero artifact reuse through generated notes and attachments.
-- Experimental UI and runtime behavior that still requires manual validation in Zotero.
+* Installable Zotero plugin package
+* Manual translation trigger through Zotero’s Tools menu
+* Zotero Reader / item-pane sidebar integration
+* Summary / Translation / Meta views
+* Gemini API key preference UI
+* Gemini connection test
+* Gemini-based translation
+* Paper-context-aware chat panel
+* Zotero-linked generated notes and attachments
+* Chunk metadata and completion tracking
+* Experimental sidebar layout and runtime behavior
 
-** PaperFlow can be tested with the Gemini API free tier, which is currently available with daily usage limits. **
-PaperFlow should not yet be considered production-stable. It is suitable for development, testing, and iterative research-tooling experiments.
+Tested primarily with local Zotero 9.x development environments.
 
-## Installation / Build
+⸻
 
-PaperFlow currently uses a simple shell build script. No bundler is required.
+Installation
 
-Build the XPI:
+The easiest way to install PaperFlow is to download the prebuilt XPI from the GitHub Releases page.
 
-```bash
-bash scripts/build.sh
-```
+Download
 
-or:
+Download the latest release from:
 
-```bash
-chmod +x scripts/build.sh
-./scripts/build.sh
-```
+https://github.com/06-month/paperflow/releases/tag/v0.3.0
 
-The built XPI is generated under:
+Download the .xpi file attached to the release.
 
-```text
-dist/paperflow.xpi
-```
-
-Install the XPI in Zotero:
+Install in Zotero
 
 1. Open Zotero.
-2. Go to `Tools -> Plugins`.
-3. Choose `Install Plugin From File`.
-4. Select `dist/paperflow.xpi`.
-5. Restart Zotero.
-6. Open Zotero Preferences and confirm that the PaperFlow settings pane is available.
-7. Save a Gemini API key and run the connection test.
+2. Go to Tools → Plugins.
+3. Click the gear icon or menu button.
+4. Choose Install Plugin From File.
+5. Select the downloaded .xpi file.
+6. Restart Zotero.
+7. Open Zotero Preferences and confirm that the PaperFlow settings pane is available.
+8. Save a Gemini API key and run the connection test.
 
-Basic usage:
+⸻
+
+Basic Usage
 
 1. Select a Zotero item with a PDF attachment, or select the PDF attachment directly.
-2. Run `Tools -> Translate Paper`.
+2. Run:
+
+Tools → Translate Paper
+
 3. Open the paper in Zotero Reader.
 4. Open the PaperFlow sidebar section.
-5. Use `Summary`, `Translation`, and `Meta` views.
+5. Use the available views:
+
+Summary | Translation | Meta
+
 6. Ask paper-specific questions in the Gemini chat panel.
 
-## Development
+⸻
+
+Development Build
+
+For development, PaperFlow can be built locally from source.
 
 Recommended development loop:
 
-1. Edit source files under `addon/`.
+1. Edit source files under addon/.
 2. Run static checks where possible:
 
-```bash
 find addon -name '*.js' -exec node --check {} \;
-```
 
 3. Build the XPI:
 
-```bash
-./scripts/build.sh
-```
+bash scripts/build.sh
 
-4. Install `dist/paperflow.xpi` in Zotero.
+or:
+
+chmod +x scripts/build.sh
+./scripts/build.sh
+
+4. Install the generated XPI in Zotero:
+
+dist/paperflow.xpi
+
 5. Restart Zotero.
 6. Test translation, artifact generation, Reader sidebar loading, metadata loading, and chat behavior.
-7. Check Zotero's Error Console for runtime errors.
+7. Check Zotero’s Error Console for runtime errors.
 
-The build script zips the contents of `addon/`, not the `addon/` directory itself. The resulting XPI should contain `manifest.json` at the archive root.
+The build script zips the contents of addon/, not the addon/ directory itself.
+The resulting XPI should contain manifest.json at the archive root.
 
-## Roadmap: Toward a Zotero-Native Research Assistant
+⸻
 
-The following items are planned or future directions. They are not all implemented today.
+Roadmap: Toward a Zotero-Native Research Assistant
 
-### Source-Aligned Translation
+The following items are planned or long-term directions. They are not all implemented today.
 
-Long-term goals:
+Source-Aligned Translation
 
-- Align translated passages with their corresponding original source text.
-- Preserve paragraph-level and section-level mappings between the original paper and the translated view.
-- Allow users to navigate from a translated passage back to the original PDF context.
-
-### Zotero Annotation / Highlight Integration
+PaperFlow’s long-term translation goal is not only to produce translated text, but to keep that translation connected to the original paper.
 
 Planned directions:
 
-- Allow users to select or drag translated text and map it back to the original PDF span.
-- Create Zotero highlights on the original PDF from translated passages.
-- Link AI-generated summaries, explanations, and translations to Zotero annotations.
-- Support annotation-aware follow-up questions.
+* Align translated passages with corresponding original source text.
+* Preserve paragraph-level and section-level mappings.
+* Allow navigation from a translated passage back to the original PDF context.
+* Support source-grounded explanations and verification.
 
-### Attachment-Aware Chat
+⸻
+
+Zotero Annotation / Highlight Integration
+
+A major future direction is connecting AI-generated reading artifacts with Zotero’s annotation system.
+
+Planned directions:
+
+* Select or drag translated text and map it back to the original PDF span.
+* Create Zotero highlights on the original PDF from translated passages.
+* Link summaries, explanations, and translations to Zotero annotations.
+* Support annotation-aware follow-up questions.
+
+Example intended workflow:
+
+Read translation
+    ↓
+Select translated passage
+    ↓
+Map to original PDF span
+    ↓
+Create Zotero highlight
+    ↓
+Ask follow-up questions about that annotation
+
+⸻
+
+Attachment-Aware Chat
+
+Paper reading often involves more than the main PDF.
 
 Future directions:
 
-- Support attaching supplementary files, notes, or additional paper-related materials to the paper-level chat context.
-- Allow questions over paper-specific artifacts beyond the main PDF.
-- Reuse Zotero-linked generated artifacts as persistent context.
+* Attach supplementary materials, notes, or related files to the paper-level chat context.
+* Ask questions over paper-specific artifacts beyond the main PDF.
+* Reuse Zotero-linked generated artifacts as persistent context.
+* Support richer paper-level memory across reading sessions.
 
-### Selection-Based Assistance
+⸻
+
+Selection-Based Assistance
 
 Planned capabilities:
 
-- Explain selected passages from the paper or translation view.
-- Ground follow-up answers in the selected text span.
-- Provide section-aware explanations for methods, equations, experiments, and limitations.
+* Explain selected passages from the paper or translation view.
+* Ground answers in the selected text span.
+* Provide section-aware explanations for methods, equations, experiments, and limitations.
+* Support follow-up questions based on the current selection.
 
-### Multimodal Paper Understanding
+⸻
+
+Multimodal Paper Understanding
 
 Long-term research directions:
 
-- Future support for figures, tables, equations, and captions.
-- Connect visual elements with surrounding text and experimental claims.
-- Support figure-grounded question answering.
+* Explain figures, tables, equations, and captions.
+* Connect visual elements with surrounding text and experimental claims.
+* Support figure-grounded question answering.
+* Help users interpret experimental results and ablation tables.
 
-### Literature Review Workflow
+⸻
 
-Planned workflow extensions:
+Literature Review Workflow
 
-- Export structured reading notes to Zotero Notes, Markdown, Obsidian, or Notion.
-- Compare multiple papers by contribution, method, dataset, and limitations.
-- Generate related-work tables from selected papers.
+PaperFlow is intended to grow beyond single-paper reading.
 
-## Project Structure
+Future workflow extensions:
 
-```text
+* Export structured reading notes to Zotero Notes, Markdown, Obsidian, or Notion.
+* Compare multiple papers by contribution, method, dataset, and limitation.
+* Generate related-work tables from selected papers.
+* Support paper triage for literature review.
+
+⸻
+
+What PaperFlow Is Not
+
+PaperFlow is a research reading assistant, not a replacement for careful reading or verification.
+
+It is not:
+
+* a production-stable Zotero extension yet,
+* a replacement for reading the original paper,
+* a guarantee of translation or summary correctness,
+* a verified source-aligned annotation system yet,
+* or a fully automated literature review system.
+
+AI-generated outputs should be reviewed critically.
+
+⸻
+
+Project Structure
+
 paperflow/
 ├─ addon/
 │  ├─ manifest.json
@@ -276,33 +466,44 @@ paperflow/
 ├─ CHANGELOG.md
 ├─ AGENTS.md
 └─ README.md
-```
 
-## Notes / Limitations
+⸻
 
-- PaperFlow is experimental and should be tested carefully with your Zotero setup.
-- Zotero internal APIs can change, and Reader/sidebar behavior may require version-specific adjustments.
-- Gemini API access is required for translation and chat.
-- AI output should be reviewed critically. PaperFlow is a reading assistant, not a substitute for reading or verification.
-- Very long papers may require chunked processing and may be affected by model limits, rate limits, or API errors.
-- The current generated translation artifact is stored as `translated.ko.html`.
-- Processing metadata is stored as `pt-meta.json`.
-- Source-aligned translation, Zotero annotation mapping, attachment-aware chat, and multimodal paper understanding are roadmap directions.
+Notes and Limitations
 
-## Contributing and Contact
+* PaperFlow is experimental.
+* Zotero internal APIs may change.
+* Reader/sidebar behavior may require version-specific adjustments.
+* Gemini API access is required for translation and chat.
+* AI output should be reviewed critically.
+* Very long papers may be affected by model limits, rate limits, or API errors.
+* Current translation artifacts are generated as translated.ko.html.
+* Processing metadata is stored as pt-meta.json.
+* Source-aligned translation, Zotero annotation mapping, attachment-aware chat, and multimodal understanding are roadmap directions, not fully implemented features.
 
-PaperFlow is being developed as an open-source research productivity project.
+⸻
 
-The project started as a personal project, but collaboration is welcome, especially from people interested in Zotero-native research workflows, AI-assisted paper reading, source-aligned translation, annotation-aware reading systems, and scholarly knowledge tools.
+Contributing
 
-If you would like to help improve PaperFlow or discuss collaboration, please contact:
+PaperFlow started as a personal research productivity project, but collaboration is welcome.
 
-```text
+Areas of interest include:
+
+* Zotero-native research workflows
+* AI-assisted paper reading
+* Source-aligned translation
+* Annotation-aware reading systems
+* Scholarly knowledge tools
+* Literature review automation
+
+For discussion or collaboration:
+
 junjeon@edu.hanbat.ac.kr
-```
 
-## License
+⸻
+
+License
 
 PaperFlow is open-source software released under the MIT License.
 
-You are free to use, modify, and distribute this project under the terms of the license. See [LICENSE](LICENSE) for details.
+You are free to use, modify, and distribute this project under the terms of the license. See LICENSE￼ for details.
