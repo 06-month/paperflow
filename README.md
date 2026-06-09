@@ -37,7 +37,7 @@ Read → Summarize → Translate → Inspect → Ask
   <img src="assets/paperflow.png" alt="PaperFlow Zotero Reader Sidebar" width="960">
 </p>
 
-> If the preview image is not available in your local clone, it can be added later under `docs/assets/paperflow-reader-sidebar.png`.
+> If the preview image is not available in your local clone, it can be added later under `assets/paperflow.png`.
 
 ---
 
