@@ -16,7 +16,7 @@
 ---
 
 <p align="center">
-  <img src="docs/assets/paperflow-reader-sidebar.png" alt="PaperFlow Zotero Reader Sidebar" width="960">
+  <img src="docs/assets/paperflow.png" alt="PaperFlow Zotero Reader Sidebar" width="960">
 </p>
 
 ## Overview
