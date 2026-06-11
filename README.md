@@ -15,6 +15,10 @@
 
 ---
 
+<p align="center">
+  <img src="docs/assets/paperflow-reader-sidebar.png" alt="PaperFlow Zotero Reader Sidebar" width="960">
+</p>
+
 ## Overview
 
 **PaperFlow** is an AI-assisted Zotero Reader sidebar for paper summarization, translation, metadata inspection, and paper-context-aware chat.
