@@ -526,6 +526,151 @@ collapsible-section[data-pane$="paperflow-reader"][open] > [data-type="body"] > 
   border-bottom-left-radius: 4px;
 }
 
+/* ── Chat attachments (drag/paste/file 첨부 카드) ────────────────────────── */
+#pt-chat-attachments {
+  flex: 0 0 auto;
+  display: none;
+  /* 이미지 썸네일은 가로로 흐르고, 텍스트 카드는 한 줄 전체를 차지 */
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 2px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+#pt-chat-attachments.pt-has-attachments {
+  display: flex;
+}
+
+.pt-attach-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 100%;
+  max-width: 100%;
+  border: 1px solid #d7e3ff;
+  border-radius: var(--pf-r-md);
+  background: #eef4ff;
+  color: var(--pf-ink);
+  font-size: 11px;
+  line-height: 1.4;
+  padding: 5px 7px 6px 9px;
+}
+
+.pt-attach-chip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.pt-attach-chip-source {
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--pf-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pt-attach-chip-preview {
+  color: var(--pf-body);
+  font-size: 10.5px;
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* 클립보드/파일 이미지 — 라벨 없이 썸네일만 (×는 모서리 오버레이) */
+.pt-attach-chip-image {
+  position: relative;
+  padding: 0;
+  border: none;
+  background: transparent;
+  align-self: flex-start;
+  /* 이미지끼리는 가로로 나란히 */
+  flex: 0 0 auto;
+  width: auto;
+  max-width: 100%;
+}
+
+.pt-attach-chip-img {
+  display: block;
+  max-width: 100%;
+  max-height: 84px;
+  object-fit: contain;
+  border: 1px solid #d7e3ff;
+  border-radius: var(--pf-r-sm);
+  background: var(--pf-canvas);
+}
+
+.pt-attach-img-remove {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+  color: #fff;
+  background: rgba(10, 11, 13, 0.55);
+  border-radius: var(--pf-r-pill);
+}
+
+.pt-attach-img-remove:hover {
+  color: #fff;
+  background: rgba(207, 32, 47, 0.85);
+}
+
+/* 전송된 사용자 말풍선 안의 이미지 — 여러 장이면 가로로 나란히 */
+.pt-msg-img {
+  display: inline-block;
+  vertical-align: top;
+  max-width: 100%;
+  max-height: 120px;
+  object-fit: contain;
+  margin-top: 6px;
+  margin-right: 4px;
+  border: 1px solid #d7e3ff;
+  border-radius: var(--pf-r-sm);
+  background: var(--pf-canvas);
+}
+
+.pt-attach-chip-remove {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--pf-muted);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: var(--pf-r-pill);
+  flex: 0 0 auto;
+}
+
+.pt-attach-chip-remove:hover {
+  color: var(--pf-down);
+  background: rgba(207, 32, 47, 0.08);
+}
+
+/* 사용자 말풍선 안의 첨부 내역 표기 */
+.pt-msg-attach-note {
+  margin-top: 6px;
+  padding-top: 4px;
+  border-top: 1px dashed #d7e3ff;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--pf-muted);
+  white-space: normal;
+}
+
 /* ── Composer (modern assistant input) ───────────────────────────────────── */
 .pt-chat-composer {
   flex: 0 0 auto;

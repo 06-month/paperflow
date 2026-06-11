@@ -6,9 +6,16 @@ var PTStorage = {
   HTML_FILENAME: "translated.ko.html",
   META_FILENAME: "pt-meta.json",
 
+  // Zotero 태그 기반 아티팩트 식별 (파일명 변경에도 안전)
+  TAG_HTML: "paperflow:html",
+  TAG_META: "paperflow:meta",
+  TAG_NOTE: "paperflow:note",
+
   // ── 메인 저장 ─────────────────────────────────────────────────────────────
   // jobs: PTChunker.buildJobs() 결과 (번역 완료된 것들)
-  // meta: { title, sections, modelName, startedAt, completedAt, ... }
+  // meta: { title, sections, modelName, startedAt, ... }
+  // pt-meta.json이 source of truth — 번역 텍스트를 포함해 저장한다.
+  // HTML/Note는 표시용 파생물이다.
   async save(parentItem, jobs, meta) {
     PTLogger.info(`저장 시작: item ${parentItem.id}`);
 
@@ -24,15 +31,10 @@ var PTStorage = {
       throw this._storageError("translated.ko.html attachment 생성 실패", e);
     }
 
-    // 3. metadata JSON 저장
+    // 3. metadata JSON 저장 (번역 본문 포함 — 재개/채팅 컨텍스트의 원천)
     const metaData = this._buildMeta(meta, jobs, htmlAttachment?.id);
     try {
-      const metaAttachment = await this._saveMetaAttachment(parentItem, metaData);
-      if (metaAttachment?.id && metaData.metaAttachmentId !== metaAttachment.id) {
-        metaData.metaAttachmentId = metaAttachment.id;
-        metaData.metaAttachmentID = metaAttachment.id;
-        await this._saveMetaAttachment(parentItem, metaData);
-      }
+      await this._saveMetaAttachment(parentItem, metaData);
     } catch (e) {
       throw this._storageError("pt-meta.json attachment 생성 실패", e);
     }
@@ -44,8 +46,28 @@ var PTStorage = {
       throw this._storageError("[PaperFlow] Note 저장 실패", e);
     }
 
-    PTLogger.info(`저장 완료: item ${parentItem.id}`);
+    PTLogger.info(`저장 완료: item ${parentItem.id} (status: ${metaData.status})`);
     return { sections, metaData };
+  },
+
+  // ── 재개: 기존 meta의 완료 chunk를 새 jobs에 주입 ─────────────────────────
+  // chunkId + 텍스트 해시가 일치하는 chunk만 재사용한다 (추출 결과가 바뀌면 무효)
+  prefillJobsFromMeta(jobs, meta) {
+    if (!meta || !Array.isArray(meta.chunks)) return 0;
+    const stored = new Map(meta.chunks.map(c => [c.chunkId, c]));
+    let restored = 0;
+    for (const job of jobs) {
+      const prev = stored.get(job.chunkId);
+      if (!prev || prev.status !== "done" || !prev.translation) continue;
+      if (prev.textHash && prev.textHash !== PTConstants.hashText(job.text)) continue;
+      job.translation = prev.translation;
+      job.summary = prev.summary || "";
+      job.status = "done";
+      job.error = null;
+      restored++;
+    }
+    PTLogger.info(`재개: 기존 완료 chunk ${restored}/${jobs.length}개 복원`);
+    return restored;
   },
 
   // ── chunk 배열 → 섹션별 병합 ──────────────────────────────────────────────
@@ -133,7 +155,7 @@ var PTStorage = {
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="generator" content="PaperFlow v0.2.2">
+<meta name="generator" content="PaperFlow v${PTConstants.VERSION}">
 <title>${esc(title)} — 번역본</title>
 <style>
   body { font-family: -apple-system, sans-serif; max-width: 860px; margin: 40px auto; padding: 0 20px; line-height: 1.7; color: #222; }
@@ -153,7 +175,7 @@ var PTStorage = {
 </head>
 <body>
 <h1>${esc(title)}</h1>
-<p class="pt-meta">번역 엔진: Gemini 3.1 Flash-Lite | 생성: ${new Date().toLocaleString("ko-KR")}</p>
+<p class="pt-meta">번역 엔진: ${esc(PTConstants.MODEL_LABEL)} | 생성: ${new Date().toLocaleString("ko-KR")}</p>
 ${sections.map(s => renderSection(s)).join("\n")}
 </body>
 </html>`;
@@ -162,13 +184,14 @@ ${sections.map(s => renderSection(s)).join("\n")}
   // ── HTML attachment 저장 ──────────────────────────────────────────────────
   async _saveHTMLAttachment(parentItem, htmlContent) {
     // 기존 attachment 있으면 업데이트
-    const existing = await this._findAttachmentByFilename(parentItem, this.HTML_FILENAME);
+    const existing = await this._findArtifactAttachment(parentItem, this.TAG_HTML, this.HTML_FILENAME);
 
     if (existing) {
       const path = existing.getFilePath && existing.getFilePath();
       if (path) {
         await Zotero.File.putContentsAsync(path, htmlContent);
         existing.setField("title", this.HTML_FILENAME);
+        await this._ensureTag(existing, this.TAG_HTML);
         await existing.saveTx();
         PTLogger.info(`HTML attachment 업데이트: ${path}`);
         return existing;
@@ -191,6 +214,7 @@ ${sections.map(s => renderSection(s)).join("\n")}
         contentType: "text/html",
         charset: "utf-8",
       });
+      await this._ensureTag(attachment, this.TAG_HTML, { save: true });
       PTLogger.info(`HTML attachment 생성: item ${attachment?.id}`);
       return attachment;
     } finally {
@@ -201,13 +225,14 @@ ${sections.map(s => renderSection(s)).join("\n")}
   // ── metadata JSON attachment 저장 ─────────────────────────────────────────
   async _saveMetaAttachment(parentItem, metaData) {
     const json = JSON.stringify(metaData, null, 2);
-    const existing = await this._findAttachmentByFilename(parentItem, this.META_FILENAME);
+    const existing = await this._findArtifactAttachment(parentItem, this.TAG_META, this.META_FILENAME);
 
     if (existing) {
       const path = existing.getFilePath && existing.getFilePath();
       if (path) {
         await Zotero.File.putContentsAsync(path, json);
         existing.setField("title", this.META_FILENAME);
+        await this._ensureTag(existing, this.TAG_META);
         await existing.saveTx();
         PTLogger.info(`metadata attachment 업데이트: ${path}`);
         return existing;
@@ -230,10 +255,22 @@ ${sections.map(s => renderSection(s)).join("\n")}
         contentType: "application/json",
         charset: "utf-8",
       });
+      await this._ensureTag(attachment, this.TAG_META, { save: true });
       PTLogger.info(`metadata attachment 생성: item ${attachment?.id}`);
       return attachment;
     } finally {
       await this._removeTempFile(tempPath);
+    }
+  },
+
+  async _ensureTag(item, tag, opts = {}) {
+    try {
+      if (!item || typeof item.addTag !== "function") return;
+      if (typeof item.hasTag === "function" && item.hasTag(tag)) return;
+      item.addTag(tag);
+      if (opts.save) await item.saveTx();
+    } catch (e) {
+      PTLogger.warn(`태그 부여 실패 (${tag}): ${e.message}`);
     }
   },
 
@@ -302,20 +339,22 @@ ${sections.map(s => renderSection(s)).join("\n")}
   },
 
   // ── Zotero Note 저장 ──────────────────────────────────────────────────────
+  // Note는 사람이 읽는 요약 파생물이다. 메타데이터는 pt-meta.json이 원천이므로
+  // 노트 편집 시 sanitization으로 깨질 수 있는 base64 주석은 더 이상 넣지 않는다.
   async _saveNote(parentItem, title, sections, metaData) {
-    const noteHTML = this._buildNoteHTML(title, sections, metaData);
-    const metaJSON = JSON.stringify(metaData);
-    const noteContent = noteHTML + `\n<!-- PT_META:${btoa(unescape(encodeURIComponent(metaJSON)))} -->`;
+    const noteContent = this._buildNoteHTML(title, sections, metaData);
 
     const existing = await this._findNoteWithTag(parentItem);
     if (existing) {
       existing.setNote(noteContent);
+      await this._ensureTag(existing, this.TAG_NOTE);
       await existing.saveTx();
       PTLogger.info(`Note 업데이트: ${existing.id}`);
     } else {
       const note = new Zotero.Item("note");
       note.parentID = parentItem.id;
       note.setNote(noteContent);
+      try { note.addTag(this.TAG_NOTE); } catch (_) { /* noop */ }
       await note.saveTx();
       PTLogger.info(`Note 생성: ${note.id}`);
     }
@@ -323,12 +362,13 @@ ${sections.map(s => renderSection(s)).join("\n")}
 
   _buildNoteHTML(title, sections, meta) {
     const esc = s => (s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-    const date = new Date(meta.completedAt || Date.now()).toLocaleString("ko-KR");
+    const date = new Date(meta.completedAt || meta.updatedAt || Date.now()).toLocaleString("ko-KR");
     const doneCount = (meta.chunks || []).filter(c => c.status === "done").length;
     const totalCount = (meta.chunks || []).length;
+    const statusLabel = meta.status === "completed" ? "번역 완료" : "번역 진행 중 (부분 저장)";
 
     let html = `<h1>${this.NOTE_TAG} ${esc(title)}</h1>`;
-    html += `<p style="color:gray;font-size:0.85em;">번역 완료: ${date} | 모델: ${esc(meta.modelName)} | chunk: ${doneCount}/${totalCount}</p>`;
+    html += `<p style="color:gray;font-size:0.85em;">${statusLabel}: ${date} | 모델: ${esc(meta.modelName)} | chunk: ${doneCount}/${totalCount}</p>`;
     html += `<p style="font-size:0.85em;">📄 전체 번역본: <em>translated.ko.html</em> attachment 참조</p>`;
     html += `<hr/>`;
     html += `<h2>섹션별 요약</h2>`;
@@ -349,8 +389,8 @@ ${sections.map(s => renderSection(s)).join("\n")}
 
   // ── 로드 ──────────────────────────────────────────────────────────────────
   async getExistingTranslationBundle(parentItem) {
-    const htmlAttachment = await this._findAttachmentByFilename(parentItem, this.HTML_FILENAME);
-    const metaAttachment = await this._findAttachmentByFilename(parentItem, this.META_FILENAME);
+    const htmlAttachment = await this._findArtifactAttachment(parentItem, this.TAG_HTML, this.HTML_FILENAME);
+    const metaAttachment = await this._findArtifactAttachment(parentItem, this.TAG_META, this.META_FILENAME);
     const note = this._findNoteWithTagSync(parentItem);
 
     const result = {
@@ -377,6 +417,7 @@ ${sections.map(s => renderSection(s)).join("\n")}
         return result;
       }
     } else {
+      // 구버전(노트 내 base64 주석) 호환 경로
       meta = this.loadMeta(parentItem);
     }
 
@@ -431,6 +472,7 @@ ${sections.map(s => renderSection(s)).join("\n")}
     return null;
   },
 
+  // 구버전 호환: 노트에 내장된 base64 메타 읽기 (신규 저장은 하지 않음)
   loadMeta(parentItem) {
     const note = this._findNoteWithTagSync(parentItem);
     if (!note) return null;
@@ -462,7 +504,13 @@ ${sections.map(s => renderSection(s)).join("\n")}
 
     const note = this._findNoteWithTagSync(parentItem);
     const noteHTML = note ? note.getNote() : "";
-    const sections = this._extractSectionsFromHTML(htmlText);
+
+    // 섹션 데이터는 구조화된 meta JSON을 우선 사용하고,
+    // 번역 텍스트가 없는 구버전 meta는 표시용 HTML 역파싱으로 fallback
+    const sections = this._hasChunkTranslations(meta)
+      ? this.sectionsFromMeta(meta)
+      : this._extractSectionsFromHTML(htmlText);
+
     return {
       parentItem,
       htmlAttachment,
@@ -474,6 +522,48 @@ ${sections.map(s => renderSection(s)).join("\n")}
       sections,
       existing,
     };
+  },
+
+  _hasChunkTranslations(meta) {
+    return Boolean(meta && Array.isArray(meta.chunks) && meta.chunks.some(c => c && c.translation));
+  },
+
+  // meta JSON(chunk 단위) → 섹션 리스트 복원
+  sectionsFromMeta(meta) {
+    const ordered = [];
+    const bySection = new Map();
+    for (const chunk of meta.chunks || []) {
+      if (!chunk) continue;
+      if (!bySection.has(chunk.sectionId)) {
+        const sec = {
+          id: chunk.sectionId,
+          heading: chunk.heading || "Untitled",
+          level: 1,
+          body: "",
+          translation: "",
+          summary: "",
+          status: "done",
+          subsections: [],
+          _chunks: [],
+        };
+        bySection.set(chunk.sectionId, sec);
+        ordered.push(sec);
+      }
+      bySection.get(chunk.sectionId)._chunks.push(chunk);
+    }
+
+    for (const sec of ordered) {
+      const chunks = sec._chunks.sort((a, b) => (a.chunkIndex || 0) - (b.chunkIndex || 0));
+      sec.translation = chunks
+        .filter(c => c.status === "done" && c.translation)
+        .map(c => c.translation)
+        .join("\n\n");
+      const withSummary = chunks.filter(c => c.summary);
+      sec.summary = withSummary.length ? withSummary[withSummary.length - 1].summary : "";
+      sec.status = chunks.every(c => c.status === "done") ? "done" : "partial";
+      delete sec._chunks;
+    }
+    return ordered;
   },
 
   _extractSectionsFromHTML(htmlText) {
@@ -498,36 +588,42 @@ ${sections.map(s => renderSection(s)).join("\n")}
 
   // ── 헬퍼 ──────────────────────────────────────────────────────────────────
   async _findNoteWithTag(parentItem) {
-    const noteIDs = parentItem.getNotes ? parentItem.getNotes() : [];
-    for (const id of noteIDs) {
-      const note = Zotero.Items.get(id);
-      const noteText = note && (note.getNote() || "");
-      if (noteText.includes(this.NOTE_TAG) || noteText.includes(this.LEGACY_NOTE_TAG)) return note;
-    }
-    return null;
+    return this._findNoteWithTagSync(parentItem);
   },
 
   _findNoteWithTagSync(parentItem) {
     const noteIDs = parentItem.getNotes ? parentItem.getNotes() : [];
+    let fallback = null;
     for (const id of noteIDs) {
       const note = Zotero.Items.get(id);
-      const noteText = note && (note.getNote() || "");
-      if (noteText.includes(this.NOTE_TAG) || noteText.includes(this.LEGACY_NOTE_TAG)) return note;
+      if (!note) continue;
+      // 1순위: Zotero 태그 (정확한 식별)
+      if (typeof note.hasTag === "function" && note.hasTag(this.TAG_NOTE)) return note;
+      // 2순위: 구버전 호환 — 본문 텍스트 매칭
+      const noteText = note.getNote() || "";
+      if (!fallback && (noteText.includes(this.NOTE_TAG) || noteText.includes(this.LEGACY_NOTE_TAG))) {
+        fallback = note;
+      }
     }
-    return null;
+    return fallback;
   },
 
-  async _findAttachmentByFilename(parentItem, filename) {
+  // 태그 우선, 파일명 fallback (구버전 아티팩트 호환)
+  async _findArtifactAttachment(parentItem, tag, filename) {
     const attIDs = parentItem.getAttachments ? parentItem.getAttachments() : [];
+    let fallback = null;
     for (const id of attIDs) {
       const att = Zotero.Items.get(id);
       if (!att) continue;
-      const title = att.getField("title") || "";
-      if (title === filename || title.startsWith(`${filename} `) || title.startsWith(`${filename} —`)) {
-        return att;
+      if (typeof att.hasTag === "function" && att.hasTag(tag)) return att;
+      if (!fallback) {
+        const title = att.getField("title") || "";
+        if (title === filename || title.startsWith(`${filename} `) || title.startsWith(`${filename} —`)) {
+          fallback = att;
+        }
       }
     }
-    return null;
+    return fallback;
   },
 
   // ── metadata 구조 빌드 ────────────────────────────────────────────────────
@@ -547,17 +643,15 @@ ${sections.map(s => renderSection(s)).join("\n")}
     const savedAt = new Date().toISOString();
 
     return {
-      version: "0.1.0",
+      version: PTConstants.VERSION,
       status,
-      modelName: "gemini-3.1-flash-lite",
+      modelName: meta.modelName || PTConstants.MODEL_NAME,
       title: meta.title,
       startedAt: meta.startedAt,
       completedAt: status === "completed" ? savedAt : null,
       updatedAt: savedAt,
       htmlAttachmentId: htmlAttachmentId || null,
       htmlAttachmentID: htmlAttachmentId || null,
-      metaAttachmentId: null,
-      metaAttachmentID: null,
       totalChunks,
       doneChunks,
       failedChunks,
@@ -571,6 +665,10 @@ ${sections.map(s => renderSection(s)).join("\n")}
         status: j.status,
         retries: j.retries,
         error: j.error || null,
+        // 번역 텍스트를 meta에 보존 — 세션 간 재개와 채팅 컨텍스트의 원천
+        textHash: PTConstants.hashText(j.text),
+        translation: j.status === "done" ? (j.translation || "") : "",
+        summary: j.summary || "",
       })),
     };
   },

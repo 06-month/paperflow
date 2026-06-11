@@ -149,9 +149,11 @@ window.PTPanel = {
     if (!this.rootURI) throw new Error("rootURI가 전달되지 않았습니다.");
     await this._runPhase("prepare Zotero API", () => this._prepareZoteroAPI());
     const load = p => Services.scriptloader.loadSubScript(this.rootURI + p, window);
+    if (typeof PTConstants === "undefined") load("src/utils/constants.js");
     if (typeof PTLogger === "undefined") load("src/utils/logger.js");
     if (typeof PTPrefs === "undefined") load("src/utils/prefs.js");
     if (typeof PTApiError === "undefined") load("src/utils/errors.js");
+    if (typeof PTRateLimiter === "undefined") load("src/modules/rateLimiter.js");
     if (typeof PTStorage === "undefined") load("src/modules/storage.js");
     if (typeof PTChat === "undefined") load("src/modules/chat.js");
     this._logScriptState("PTLogger", typeof PTLogger !== "undefined");

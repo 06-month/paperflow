@@ -1,8 +1,13 @@
 "use strict";
 
 var PTChunker = {
-  // 청크당 최대 토큰 (Gemini 출력 안정성 고려, 입력 2000토큰 ≈ 8000자)
-  MAX_CHUNK_TOKENS: 2000,
+  // 청크당 최대 토큰 (입력 1500토큰 ≈ 6000자)
+  // 한국어 번역 출력은 원문보다 토큰이 늘어나므로 maxOutputTokens 한도 내에
+  // 안전하게 들어오도록 입력을 보수적으로 잡는다.
+  MAX_CHUNK_TOKENS: 1500,
+
+  // 마지막 chunk에 첨부하는 섹션 개요(요약 생성용) 최대 길이
+  MAX_SUMMARY_CONTEXT_CHARS: 6000,
 
   // ── 섹션 트리 전체를 chunk 작업 배열로 변환 ──────────────────────────────
   // 반환: [{ chunkId, sectionId, heading, text, chunkIndex, totalChunks }]
@@ -19,6 +24,7 @@ var PTChunker = {
       if (body.trim().length > 0) {
         const chunks = this._splitBody(body);
         chunks.forEach((text, idx) => {
+          const isLast = idx === chunks.length - 1;
           jobs.push({
             chunkId: `${section.id}_c${idx}`,
             sectionId: section.id,
@@ -26,6 +32,11 @@ var PTChunker = {
             text,
             chunkIndex: idx,
             totalChunks: chunks.length,
+            // 여러 chunk로 나뉜 섹션의 마지막 chunk에는 섹션 전체 개요를 첨부해
+            // "섹션 전체 요약"이 마지막 chunk 내용만으로 만들어지지 않게 한다
+            summaryContext: (isLast && chunks.length > 1)
+              ? body.slice(0, this.MAX_SUMMARY_CONTEXT_CHARS)
+              : "",
             // 번역 결과 초기값
             translation: "",
             summary: "",       // 섹션의 마지막 chunk에만 생성

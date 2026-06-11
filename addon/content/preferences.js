@@ -44,10 +44,11 @@ window.PTPrefsUI = {
 
     this._status("확인 중...", "gray");
     try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${encodeURIComponent(key)}`;
+      const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent";
       const r = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        // API 키는 URL이 아닌 헤더로 전송 (로그/프록시 노출 방지)
+        headers: { "Content-Type": "application/json", "x-goog-api-key": key },
         body: JSON.stringify({ contents: [{ parts: [{ text: "hi" }] }], generationConfig: { maxOutputTokens: 5 } }),
       });
       if (r.ok) {

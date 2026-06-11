@@ -7,18 +7,9 @@ var PTExtractor = {
 
     let text = "";
 
-    // 방법 1: Zotero 내장 fullText 인덱스 (가장 빠름, 이미 인덱싱된 경우)
-    try {
-      text = await this._extractViaIndex(pdfAttachment);
-      if (text && text.trim().length > 100) {
-        PTLogger.info(`인덱스에서 추출 완료: ${text.length}자`);
-        return text;
-      }
-    } catch (e) {
-      PTLogger.warn(`인덱스 추출 실패: ${e.message}`);
-    }
-
-    // 방법 2: Zotero PDFWorker (pdf.js 기반 직접 추출)
+    // 방법 1: Zotero PDFWorker (pdf.js 기반 직접 추출)
+    // fullText 인덱스는 글자 수 제한으로 긴 논문이 조용히 잘릴 수 있으므로
+    // 전체 텍스트를 보장하는 PDFWorker를 우선 사용한다.
     try {
       text = await this._extractViaPDFWorker(pdfAttachment);
       if (text && text.trim().length > 100) {
@@ -27,6 +18,17 @@ var PTExtractor = {
       }
     } catch (e) {
       PTLogger.warn(`PDFWorker 추출 실패: ${e.message}`);
+    }
+
+    // 방법 2: Zotero 내장 fullText 인덱스 (fallback — 잘려 있을 수 있음)
+    try {
+      text = await this._extractViaIndex(pdfAttachment);
+      if (text && text.trim().length > 100) {
+        PTLogger.info(`인덱스에서 추출 완료 (fallback): ${text.length}자 — 인덱스 제한으로 잘렸을 수 있음`);
+        return text;
+      }
+    } catch (e) {
+      PTLogger.warn(`인덱스 추출 실패: ${e.message}`);
     }
 
     if (!text || text.trim().length === 0) {

@@ -12,6 +12,7 @@ async function startup({ id, version, rootURI }) {
   registerChrome(rootURI);
 
   // ── 유틸 먼저 로드 ────────────────────────────────────────────────────────
+  Services.scriptloader.loadSubScript(rootURI + "src/utils/constants.js");
   Services.scriptloader.loadSubScript(rootURI + "src/utils/logger.js");
   Services.scriptloader.loadSubScript(rootURI + "src/utils/prefs.js");
   Services.scriptloader.loadSubScript(rootURI + "src/utils/errors.js");

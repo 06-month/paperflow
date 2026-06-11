@@ -45,12 +45,16 @@ var PTCleaner = {
       if (/^arXiv:\d{4}\.\d{4,5}/i.test(trimmed)) continue;
 
       // "Preprint. Under review." 같은 패턴
-      if (/^Preprint\./i.test(trimmed)) continue;
-      if (/^Under review/i.test(trimmed)) continue;
-      if (/^Submitted to/i.test(trimmed)) continue;
-      if (/^Published in/i.test(trimmed)) continue;
-      if (/^Proceedings of/i.test(trimmed)) continue;
-      if (/^Conference on/i.test(trimmed)) continue;
+      // header/footer는 짧은 단독 줄이므로 길이 제한을 둬서
+      // 본문 문장이 줄바꿈으로 같은 단어로 시작하는 경우 오삭제를 방지한다
+      if (trimmed.length <= 60) {
+        if (/^Preprint\./i.test(trimmed)) continue;
+        if (/^Under review/i.test(trimmed)) continue;
+        if (/^Submitted to/i.test(trimmed)) continue;
+        if (/^Published in/i.test(trimmed)) continue;
+        if (/^Proceedings of/i.test(trimmed)) continue;
+        if (/^Conference on/i.test(trimmed)) continue;
+      }
 
       results.push(line);
     }
@@ -86,7 +90,7 @@ var PTCleaner = {
     for (let i = 0; i < lines.length; i++) {
       const trimmed = lines[i].trim();
       if (refPatterns.some(p => p.test(trimmed))) {
-        // References가 너무 앞에 있으면 (전체의 70% 이전) 무시
+        // References가 너무 앞에 있으면 (전체의 50% 이전) 무시
         if (i > lines.length * 0.5) {
           refIdx = i;
           break;
@@ -95,10 +99,27 @@ var PTCleaner = {
     }
 
     if (refIdx > 0) {
+      // References 뒤에 Appendix가 있으면 그 부분은 보존한다
+      const appendixIdx = this._findAppendixAfter(lines, refIdx);
+      if (appendixIdx > refIdx) {
+        PTLogger.info(`References 제거 (Appendix 보존): ${lines.length}줄 → ${refIdx + (lines.length - appendixIdx)}줄`);
+        return lines.slice(0, refIdx).concat(lines.slice(appendixIdx));
+      }
       PTLogger.info(`References 제거: ${lines.length}줄 → ${refIdx}줄`);
       return lines.slice(0, refIdx);
     }
     return lines;
+  },
+
+  _findAppendixAfter(lines, fromIdx) {
+    const appendixRe = /^(Appendix(\s+[A-Z])?([.:]\s.*)?|[A-Z]\.?\s+Appendix|Supplementary(\s+Materials?)?)\s*$/i;
+    for (let i = fromIdx + 1; i < lines.length; i++) {
+      const trimmed = lines[i].trim();
+      if (trimmed.length > 0 && trimmed.length <= 60 && appendixRe.test(trimmed)) {
+        return i;
+      }
+    }
+    return -1;
   },
 
   // ── URL/DOI 단독 줄 제거 ─────────────────────────────────────────────────

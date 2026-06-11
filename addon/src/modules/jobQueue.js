@@ -4,19 +4,21 @@ var PTJobQueue = {
   _jobs: [],
   _running: false,
   _cancelled: false,
-  _onProgress: null,   // (doneCount, totalCount, lastChunk) => void
-  _onComplete: null,   // (jobs) => void
-  _onError: null,      // (error) => void
+  _onProgress: null,    // (doneCount, totalCount, lastChunk) => void
+  _onSectionEnd: null,  // (jobs, lastJob) => void — 섹션 경계마다 부분 저장용
+  _onComplete: null,    // (jobs) => void
+  _onError: null,       // (error) => void
 
   MAX_RETRIES: 3,
   RETRY_BASE_MS: 5000,
 
   // ── 큐 초기화 및 실행 ─────────────────────────────────────────────────────
-  async run(jobs, { onProgress, onComplete, onError } = {}) {
+  async run(jobs, { onProgress, onSectionEnd, onComplete, onError } = {}) {
     this._jobs = jobs;
     this._running = true;
     this._cancelled = false;
     this._onProgress = onProgress || null;
+    this._onSectionEnd = onSectionEnd || null;
     this._onComplete = onComplete || null;
     this._onError = onError || null;
 
@@ -25,7 +27,9 @@ var PTJobQueue = {
     try {
       await this._processAll();
     } catch (e) {
-      PTLogger.error(`큐 실패: ${e.message}`);
+      if (e?.code !== "CANCELLED") {
+        PTLogger.error(`큐 실패: ${e.message}`);
+      }
       if (this._onError) this._onError(e);
     } finally {
       this._running = false;
@@ -49,7 +53,8 @@ var PTJobQueue = {
     const total = this._jobs.length;
     let doneCount = this._jobs.filter(j => j.status === "done").length;
 
-    for (const job of this._jobs) {
+    for (let i = 0; i < this._jobs.length; i++) {
+      const job = this._jobs[i];
       if (this._cancelled) {
         PTLogger.info("번역 취소됨");
         break;
@@ -70,10 +75,18 @@ var PTJobQueue = {
           job.summary = result.summary || "";
           job.status = "done";
           job.error = null;
+          job.retries = attempt;
           success = true;
           break;
         } catch (e) {
           PTLogger.warn(`chunk ${job.chunkId} 시도 ${attempt + 1} 실패: ${e.message}`);
+
+          if (e?.nonRetryable) {
+            job.status = "failed";
+            job.error = e.message;
+            PTLogger.error(`chunk ${job.chunkId} 재시도 불가 오류로 실패: ${e.message}`);
+            break;
+          }
 
           if (e instanceof PTRateLimitError) {
             const waitMs = e.retryAfterMs || this.RETRY_BASE_MS;
@@ -93,6 +106,9 @@ var PTJobQueue = {
         }
       }
 
+      // 취소로 running 상태로 남은 chunk는 pending으로 되돌림 (재개 시 다시 처리)
+      if (job.status === "running") job.status = "pending";
+
       if (job.status === "done") doneCount++;
 
       // 진행률 콜백
@@ -100,14 +116,14 @@ var PTJobQueue = {
         this._onProgress(doneCount, total, job);
       }
 
-      // partial save: 섹션이 바뀔 때마다 중간 저장
-      // (storage 모듈이 등록된 경우)
-      if (success && this._onProgress) {
-        // 다음 chunk가 다른 섹션이면 저장 시그널
-        const nextJob = this._jobs[this._jobs.indexOf(job) + 1];
+      // 섹션 경계마다 부분 저장 시그널 — 취소/실패 시에도 결과가 남도록
+      if (success && this._onSectionEnd) {
+        const nextJob = this._jobs[i + 1];
         if (!nextJob || nextJob.sectionId !== job.sectionId) {
-          if (this._onProgress) {
-            this._onProgress(doneCount, total, job, true /* sectionBoundary */);
+          try {
+            this._onSectionEnd(this._jobs, job);
+          } catch (e) {
+            PTLogger.warn(`섹션 경계 저장 콜백 실패: ${e.message}`);
           }
         }
       }

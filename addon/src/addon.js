@@ -112,6 +112,13 @@ class PaperTranslatorAddon {
   async runTranslation(win, itemInput = null) {
     PTLogger.info("번역 시작 요청");
 
+    // 0. 이미 번역 중이면 먼저 확인 (큐는 전역 1개 — 동시 실행 불가)
+    if (PTJobQueue.isRunning()) {
+      const cancel = this._confirm(win, "번역이 이미 진행 중입니다. 취소하시겠습니까?");
+      if (cancel) PTJobQueue.cancel();
+      return;
+    }
+
     // 1. 선택된 item 확인
     const selectedItem = itemInput || PTItemResolver.getSelectedItem();
     if (!selectedItem) {
@@ -139,6 +146,7 @@ class PaperTranslatorAddon {
       PTLogger.warn(`기존 번역 확인 실패: ${e.message}`);
     }
 
+    let resumeMeta = null;
     if (existing?.completed) {
       PTLogger.info("[PaperFlow] Existing completed translation found; skipping translation");
       const action = this._promptExistingTranslation(win, existing, true);
@@ -151,8 +159,14 @@ class PaperTranslatorAddon {
     } else if (existing?.exists) {
       PTLogger.info("[PaperFlow] Existing partial translation found");
       const action = this._promptExistingTranslation(win, existing, false);
-      if (action !== "retranslate") return;
-      PTLogger.info("[PaperFlow] User requested re-translation");
+      if (action === "resume") {
+        resumeMeta = existing.meta || null;
+        PTLogger.info("[PaperFlow] User requested resume from partial translation");
+      } else if (action !== "retranslate") {
+        return;
+      } else {
+        PTLogger.info("[PaperFlow] User requested re-translation");
+      }
     }
 
     // 4. API 키 확인
@@ -162,10 +176,9 @@ class PaperTranslatorAddon {
       return;
     }
 
-    // 5. 이미 번역 중이면 중단
+    // 5. 대화상자 사이에 다른 경로로 번역이 시작됐을 수 있으므로 재확인
     if (PTJobQueue.isRunning()) {
-      const cancel = this._confirm(win, "번역이 이미 진행 중입니다. 취소하시겠습니까?");
-      if (cancel) PTJobQueue.cancel();
+      this._alert(win, "다른 번역이 이미 진행 중입니다.");
       return;
     }
 
@@ -208,11 +221,41 @@ class PaperTranslatorAddon {
       const jobs = PTChunker.buildJobs(sections);
       PTLogger.info(`총 ${jobs.length}개 chunk 생성`);
 
+      // 재개: 기존 완료 chunk를 복원 (chunkId + 텍스트 해시 일치 시)
+      if (resumeMeta) {
+        const restored = PTStorage.prefillJobsFromMeta(jobs, resumeMeta);
+        if (restored > 0) {
+          progressWin.update(`기존 결과 ${restored}개 chunk 재사용`, 18);
+        }
+      }
+
       progressWin.update(`번역 시작 (총 ${jobs.length}개 chunk)...`, 20);
+
+      // 저장은 항상 이 체인을 통해 직렬화 — 부분 저장과 최종 저장의 경합 방지
+      let saveChain = Promise.resolve();
+      const enqueueSave = (jobsArr) => {
+        saveChain = saveChain
+          .then(() => {
+            if (!jobsArr.some(j => j.status === "done")) return null;
+            return PTStorage.save(targetItem, jobsArr, {
+              title,
+              sections,
+              startedAt,
+              modelName: PTConstants.MODEL_NAME,
+            });
+          });
+        const current = saveChain;
+        // 부분 저장 실패가 체인을 끊지 않도록 흡수하되, 호출자는 원본 결과를 받는다
+        saveChain = saveChain.catch(err => {
+          PTLogger.error(`저장 실패 상세: ${this._errorDetail(err)}`);
+          return null;
+        });
+        return current;
+      };
 
       // Phase 7~8: queue 번역
       await PTJobQueue.run(jobs, {
-        onProgress: (done, total, lastJob, isSectionBoundary) => {
+        onProgress: (done, total, lastJob) => {
           if (progressWin.isCancelled()) {
             PTJobQueue.cancel();
             return;
@@ -223,19 +266,22 @@ class PaperTranslatorAddon {
             PTLogger.info(`번역 진행: ${done}/${total} — ${lastJob.heading}`);
           }
         },
+        // 섹션이 끝날 때마다 중간 저장 — 취소/중단돼도 결과가 남는다
+        onSectionEnd: (jobsArr) => {
+          enqueueSave(jobsArr).catch(() => { /* 위에서 로깅됨 */ });
+        },
         onComplete: async (finishedJobs) => {
           assertNotCancelled();
-          // Phase 9: 저장
+          if (!finishedJobs.some(j => j.status === "done")) {
+            progressWin.update("번역된 chunk가 없습니다.", 100);
+            progressWin.setDone(false);
+            return;
+          }
+          // Phase 9: 최종 저장
           progressWin.update("저장 중...", 96);
           try {
-            await PTStorage.save(targetItem, finishedJobs, {
-              title,
-              sections,
-              startedAt,
-              modelName: "gemini-3.1-flash-lite",
-            });
+            await enqueueSave(finishedJobs);
           } catch (saveErr) {
-            PTLogger.error(`저장 실패 상세: ${this._errorDetail(saveErr)}`);
             progressWin.update(`저장 실패: ${this._shortErrorMessage(saveErr)}`, 100);
             progressWin.setDone(false);
             return;
@@ -250,15 +296,25 @@ class PaperTranslatorAddon {
           PTLogger.info("번역 파이프라인 완료");
         },
         onError: (err) => {
-          if (this._isCancelError(err)) {
-            PTLogger.info("번역이 사용자 요청으로 취소됨");
-            progressWin.update("취소됨", 100);
-            progressWin.setDone(false, { cancelled: true });
-            return;
-          }
-          PTLogger.error(`큐 오류: ${err.message}`);
-          progressWin.update(`오류: ${err.message}`, 100);
-          progressWin.setDone(false);
+          const cancelled = this._isCancelError(err);
+          if (cancelled) PTLogger.info("번역이 사용자 요청으로 취소됨");
+          else PTLogger.error(`큐 오류: ${err.message}`);
+
+          // 취소/오류 시에도 완료된 chunk는 저장한다
+          const hasPartial = jobs.some(j => j.status === "done");
+          const finish = (savedOk) => {
+            const saveNote = hasPartial
+              ? (savedOk ? " — 부분 결과 저장됨" : " — 부분 결과 저장 실패")
+              : "";
+            if (cancelled) {
+              progressWin.update(`취소됨${saveNote}`, 100);
+              progressWin.setDone(false, { cancelled: true });
+            } else {
+              progressWin.update(`오류: ${err.message}${saveNote}`, 100);
+              progressWin.setDone(false);
+            }
+          };
+          enqueueSave(jobs).then(() => finish(true), () => finish(false));
         },
       });
 
@@ -369,9 +425,31 @@ class PaperTranslatorAddon {
       }
     }
 
-    const msg = `이 논문에는 미완료 PaperFlow 결과가 있습니다. (status: ${existing?.status || "partial"})\n다시 번역할까요?`;
+    // 미완료 결과: 저장된 완료 chunk가 있으면 이어서 번역(Resume) 제안
+    const canResume = Array.isArray(existing?.meta?.chunks)
+      && existing.meta.chunks.some(c => c?.status === "done" && c?.translation);
+    const msg = `이 논문에는 미완료 PaperFlow 결과가 있습니다. (status: ${existing?.status || "partial"})\n${canResume ? "완료된 chunk는 재사용하고 이어서 번역할 수 있습니다." : "다시 번역할까요?"}`;
     try {
       const p = Services.prompt;
+      if (canResume) {
+        const flags = (p.BUTTON_POS_0 * p.BUTTON_TITLE_IS_STRING)
+          + (p.BUTTON_POS_1 * p.BUTTON_TITLE_IS_STRING)
+          + (p.BUTTON_POS_2 * p.BUTTON_TITLE_IS_STRING);
+        const choice = p.confirmEx(
+          win,
+          "PaperFlow",
+          msg,
+          flags,
+          "Resume",
+          "Re-translate",
+          "Cancel",
+          null,
+          {}
+        );
+        if (choice === 0) return "resume";
+        if (choice === 1) return "retranslate";
+        return "cancel";
+      }
       const flags = (p.BUTTON_POS_0 * p.BUTTON_TITLE_IS_STRING)
         + (p.BUTTON_POS_1 * p.BUTTON_TITLE_IS_STRING);
       const choice = p.confirmEx(
@@ -525,12 +603,15 @@ class PaperTranslatorAddon {
       const box = doc.getElementById("zotero-progress-text-box");
       if (!box || doc.getElementById("paperflow-progress-cancel")) return;
 
+      // ×(닫기)로 창을 닫은 경우 — 번역은 계속되어야 하므로 취소로 취급하지 않는다
+      let dismissed = false;
+
       try {
         progressWindow.addEventListener("close", () => {
-          if (!isFinished()) requestCancel("window-close");
+          if (!isFinished() && !dismissed) requestCancel("window-close");
         }, { once: true });
         progressWindow.addEventListener("unload", () => {
-          if (!isFinished()) requestCancel("window-unload");
+          if (!isFinished() && !dismissed) requestCancel("window-unload");
         }, { once: true });
       } catch (_) { /* noop */ }
 
@@ -545,14 +626,29 @@ class PaperTranslatorAddon {
 
         const cancelButton = doc.createXULElement("button");
         cancelButton.id = "paperflow-progress-cancel";
-        cancelButton.setAttribute("label", "× Cancel");
+        cancelButton.setAttribute("label", "취소");
         cancelButton.setAttribute("tooltiptext", "PaperFlow 번역을 취소합니다.");
         cancelButton.style.minHeight = "24px";
         cancelButton.style.padding = "2px 10px";
         cancelButton.addEventListener("command", () => requestCancel("cancel-button"));
 
+        // 진행 창만 닫는 × — 번역은 백그라운드에서 계속된다
+        const hideButton = doc.createXULElement("button");
+        hideButton.id = "paperflow-progress-hide";
+        hideButton.setAttribute("label", "×");
+        hideButton.setAttribute("tooltiptext", "진행 창을 닫습니다. 번역은 계속 진행됩니다.");
+        hideButton.style.minHeight = "24px";
+        hideButton.style.minWidth = "28px";
+        hideButton.style.padding = "2px 8px";
+        hideButton.addEventListener("command", () => {
+          dismissed = true;
+          PTLogger.info("진행 창 닫힘 (번역은 계속 진행)");
+          try { progressWindow.close(); } catch (_) { /* noop */ }
+        });
+
         row.appendChild(spacer);
         row.appendChild(cancelButton);
+        row.appendChild(hideButton);
         box.appendChild(row);
         progressWindow.sizeToContent();
       } catch (e) {
@@ -573,9 +669,9 @@ class PaperTranslatorAddon {
   }
 
   _isCancelError(err) {
-    return err?.code === "CANCELLED"
-      || /취소/.test(err?.message || "")
-      || /cancel/i.test(err?.message || "");
+    // 메시지 정규식 매칭은 "connection cancelled by peer" 같은 네트워크 오류를
+    // 사용자 취소로 오분류하므로 오류 코드로만 판정한다
+    return err?.code === "CANCELLED";
   }
 
   _errorDetail(err) {

@@ -19,10 +19,25 @@ var PaperFlowReaderSidebar = {
     "related",
   ],
 
-  BODY_XHTML: '<paperflow-reader-panel xmlns="http://www.w3.org/1999/xhtml" />',
+  // custom element는 한 번 정의하면 재정의가 불가능하므로, 플러그인 업데이트 후
+  // 구버전 클래스가 계속 쓰이지 않도록 태그 이름에 버전을 포함시킨다
+  get ELEMENT_NAME() {
+    const ver = (typeof PTConstants !== "undefined" && PTConstants.VERSION)
+      ? PTConstants.VERSION
+      : "0";
+    return `paperflow-reader-panel-v${ver.replace(/[^0-9a-z]/gi, "-")}`;
+  },
+
+  get BODY_XHTML() {
+    return `<${this.ELEMENT_NAME} xmlns="${this.XHTML_NS}" />`;
+  },
 
   _registeredPaneID: null,
   _styleSheetRegistered: false,
+  _selectionListener: null,
+  _activePanels: new Set(), // 현재 연결된 panel element들 (PDF 드래그 전달용)
+  _pdfPopupMarker: null,    // 리더 선택 팝업 생존 감지용 마커 (팝업이 사라지면 선택 해제로 간주)
+  _pdfMarkerTimer: null,
   _loggedInitProps: false,
   _loggedDestroyProps: false,
   _loggedItemChangeProps: false,
@@ -65,6 +80,7 @@ var PaperFlowReaderSidebar = {
       this._clog(`registerSection returned: ${this._registeredPaneID}`);
       this._ensureOpenPref(this._registeredPaneID);
       this._ensureSidenavOrder();
+      this._registerReaderSelectionListener();
     } catch (e) {
       this._reportError("registerSection failed", e);
     }
@@ -73,6 +89,9 @@ var PaperFlowReaderSidebar = {
   // ── 해제 ────────────────────────────────────────────────────────────────
   remove() {
     this._unregisterStyleSheet();
+    this._unregisterReaderSelectionListener();
+    this._stopPdfMarkerWatch();
+    this._activePanels.clear();
     if (!this._registeredPaneID) return;
     try {
       const manager = (typeof Zotero !== "undefined") ? Zotero.ItemPaneManager : null;
@@ -99,10 +118,10 @@ var PaperFlowReaderSidebar = {
         win = Zotero.getMainWindow();
       }
       if (!win || !win.customElements || !win.HTMLElement) {
-        this._clog("paperflow-reader-panel define skipped: customElements unavailable");
+        this._clog(`${this.ELEMENT_NAME} define skipped: customElements unavailable`);
         return false;
       }
-      if (win.customElements.get("paperflow-reader-panel")) {
+      if (win.customElements.get(this.ELEMENT_NAME)) {
         return true;
       }
 
@@ -116,6 +135,11 @@ var PaperFlowReaderSidebar = {
           this._bundle = null;
           this._activeTab = "summary";
           this._chatSending = false;
+          this._chatHistory = []; // [{ role, text }] — 멀티턴 대화용
+          // [{ id, kind, source, label, text?, mimeType?, data?, sizeBytes?, truncated }]
+          // kind: "selection" | "file" (텍스트) | "image" | "media-pdf" (base64)
+          this._pendingAttachments = [];
+          this._attachmentSeq = 0;
           this._onHostResize = null;
           this._lastHostHeight = 0;
           this._lastHostMaxHeight = 0;
@@ -135,6 +159,8 @@ var PaperFlowReaderSidebar = {
         }
 
         connectedCallback() {
+          PaperFlowReaderSidebar._activePanels.add(this);
+          this._wireSelectionWatch();
           if (this._rendered) {
             this._wireHostResize();
             this._applyLayoutSizing();
@@ -156,6 +182,13 @@ var PaperFlowReaderSidebar = {
         }
 
         disconnectedCallback() {
+          PaperFlowReaderSidebar._activePanels.delete(this);
+          try {
+            if (this._onSelectionChange) {
+              this.ownerDocument.removeEventListener("selectionchange", this._onSelectionChange);
+              this._onSelectionChange = null;
+            }
+          } catch (_) { /* noop */ }
           try {
             const w = this.ownerDocument && this.ownerDocument.defaultView;
             if (w && this._onHostResize) {
@@ -163,6 +196,62 @@ var PaperFlowReaderSidebar = {
               this._onHostResize = null;
             }
           } catch (_) { /* noop */ }
+        }
+
+        // 드래그가 해제되면(다른 곳 클릭 등) 해당 드래그 첨부도 자동 제거
+        _wireSelectionWatch() {
+          try {
+            if (this._onSelectionChange) return;
+            this._onSelectionChange = () => this._handleSelectionChange();
+            this.ownerDocument.addEventListener("selectionchange", this._onSelectionChange);
+          } catch (_) { /* noop */ }
+        }
+
+        _handleSelectionChange() {
+          try {
+            const hasViewSelection = this._pendingAttachments.some(
+              a => a.kind === "selection" && (a.source === "summary" || a.source === "translation")
+            );
+            if (!hasViewSelection) return;
+
+            const win = this.ownerDocument && this.ownerDocument.defaultView;
+            const sel = win && win.getSelection ? win.getSelection() : null;
+            const text = sel ? String(sel).trim() : "";
+
+            // 콘텐츠 영역 안에 유효한 선택이 남아 있으면 유지
+            if (text.length >= 2
+              && sel.anchorNode
+              && this._contentArea
+              && this._contentArea.contains(sel.anchorNode)) {
+              return;
+            }
+
+            // 질문을 입력하러 채팅 영역을 클릭한 경우는 해제로 보지 않는다
+            const active = this.ownerDocument.activeElement;
+            if (active && this._chatSection && this._chatSection.contains(active)) return;
+
+            this.removeSelectionAttachment("summary");
+            this.removeSelectionAttachment("translation");
+          } catch (_) { /* noop */ }
+        }
+
+        removeSelectionAttachment(source) {
+          const before = this._pendingAttachments.length;
+          this._pendingAttachments = this._pendingAttachments.filter(
+            a => !(a.kind === "selection" && a.source === source)
+          );
+          if (this._pendingAttachments.length !== before) this._renderAttachmentChips();
+        }
+
+        // PDF 리더 드래그를 이 panel이 받아야 하는지 판정
+        matchesParentItemID(parentItemID) {
+          try {
+            if (!this._item || parentItemID == null) return false;
+            const parent = PaperFlowReaderSidebar._resolveParentItem(this._item) || this._item;
+            return Boolean(parent && parent.id === parentItemID);
+          } catch (_) {
+            return false;
+          }
         }
 
         _wireHostResize() {
@@ -431,6 +520,11 @@ var PaperFlowReaderSidebar = {
           chatLog.setAttribute("id", "pt-chat-log");
           this._chatLog = chatLog;
 
+          // 드래그/파일 첨부 칩 영역 (입력창 바로 위)
+          const chatAttachments = doc.createElementNS(xhtmlNS, "div");
+          chatAttachments.setAttribute("id", "pt-chat-attachments");
+          this._chatAttachmentsEl = chatAttachments;
+
           const chatComposer = doc.createElementNS(xhtmlNS, "div");
           chatComposer.setAttribute("id", "pt-chat-composer");
           chatComposer.setAttribute("class", "pt-chat-composer");
@@ -450,9 +544,8 @@ var PaperFlowReaderSidebar = {
           chatAttach.setAttribute("id", "pt-chat-attach");
           chatAttach.setAttribute("type", "button");
           chatAttach.setAttribute("class", "pt-icon-btn");
-          chatAttach.setAttribute("title", "첨부파일은 이후 버전에서 지원 예정입니다.");
-          chatAttach.setAttribute("aria-label", "첨부파일은 이후 버전에서 지원 예정입니다.");
-          chatAttach.setAttribute("disabled", "true");
+          chatAttach.setAttribute("title", "내 컴퓨터에서 파일을 선택해 대화에 첨부합니다.");
+          chatAttach.setAttribute("aria-label", "내 컴퓨터에서 파일을 선택해 대화에 첨부합니다.");
           chatAttach.textContent = "+";
           this._chatAttach = chatAttach;
           composerTools.appendChild(chatAttach);
@@ -473,7 +566,10 @@ var PaperFlowReaderSidebar = {
           chatComposer.appendChild(composerActions);
 
           chatSection.appendChild(chatLog);
+          chatSection.appendChild(chatAttachments);
           chatSection.appendChild(chatComposer);
+          this._chatSection = chatSection;
+          this._chatComposer = chatComposer;
           mainArea.appendChild(chatSection);
 
           root.appendChild(mainArea);
@@ -496,8 +592,18 @@ var PaperFlowReaderSidebar = {
             this._renderActiveTabContent();
           });
 
+          // Summary/Translation 뷰에서 드래그한 텍스트를 자동 첨부
+          contentArea.addEventListener("mouseup", () => {
+            const w = this.ownerDocument && this.ownerDocument.defaultView;
+            // 선택이 확정된 다음 tick에 읽는다
+            if (w) w.setTimeout(() => this._captureContentSelection(), 0);
+          });
+
           // Wire Chat Event Listeners
+          chatAttach.addEventListener("click", () => this._openFilePicker());
           chatSend.addEventListener("click", () => this._ask());
+          // 클립보드 이미지 붙여넣기 (⌘V / Ctrl+V) → 이미지 첨부
+          chatInput.addEventListener("paste", (e) => this._handlePaste(e));
           chatInput.addEventListener("keydown", (e) => {
             if (e.isComposing || e.keyCode === 229) return;
             if (e.key === "Enter" && !e.shiftKey) {
@@ -646,7 +752,496 @@ var PaperFlowReaderSidebar = {
           container.appendChild(wrapper);
         }
 
+        // ── 채팅 첨부 (드래그/파일) ─────────────────────────────────────────
+        _selectionSourceLabel(source) {
+          return ({
+            pdf: "PDF 원문",
+            summary: "Summary",
+            translation: "Translation",
+          })[source] || source;
+        }
+
+        // Summary/Translation 뷰에서 드래그된 텍스트 캡처
+        _captureContentSelection() {
+          try {
+            const source = this._activeTab === "summary"
+              ? "summary"
+              : (this._activeTab === "translation" ? "translation" : null);
+            if (!source) return; // Meta 탭 등은 대상 아님
+
+            const win = this.ownerDocument && this.ownerDocument.defaultView;
+            const sel = win && win.getSelection ? win.getSelection() : null;
+            const text = sel ? String(sel).trim() : "";
+            if (text.length < 2) return; // 빈 선택/단일 문자 클릭만 무시
+
+            // 선택 영역이 콘텐츠 카드 안에 있는 경우만
+            const anchor = sel.anchorNode;
+            if (!anchor || !this._contentArea || !this._contentArea.contains(anchor)) return;
+
+            this.addSelectionAttachment(source, text);
+          } catch (e) {
+            PaperFlowReaderSidebar._warn(`content selection capture failed: ${e.message}`);
+          }
+        }
+
+        // 드래그 첨부 추가 — 같은 출처의 이전 드래그는 최신 선택으로 교체
+        addSelectionAttachment(source, text) {
+          try {
+            if (!this._rendered) return;
+            // 채팅을 쓸 수 없는 상태(번역 결과 없음)면 첨부도 받지 않는다
+            if (this._chatInput && this._chatInput.disabled) return;
+            const MAX = 6000;
+            const truncated = text.length > MAX;
+            const clipped = truncated ? text.slice(0, MAX) : text;
+
+            const existing = this._pendingAttachments.find(
+              a => a.kind === "selection" && a.source === source
+            );
+            if (existing) {
+              existing.text = clipped;
+              existing.truncated = truncated;
+            } else {
+              this._pendingAttachments.push({
+                id: ++this._attachmentSeq,
+                kind: "selection",
+                source,
+                label: this._selectionSourceLabel(source),
+                text: clipped,
+                truncated,
+              });
+            }
+            this._renderAttachmentChips();
+          } catch (e) {
+            PaperFlowReaderSidebar._warn(`selection attach failed: ${e.message}`);
+          }
+        }
+
+        // 칩 미리보기: 내용을 그대로 보여주다가 길면 …으로 생략
+        _attachmentPreview(att) {
+          const PREVIEW_MAX = 140;
+          if (att.kind === "media-pdf") {
+            return `PDF 문서 · ${this._formatBytes(att.sizeBytes)}`;
+          }
+          const text = (att.text || "").replace(/\s+/g, " ").trim();
+          return text.length > PREVIEW_MAX ? `${text.slice(0, PREVIEW_MAX)}…` : text;
+        }
+
+        _formatBytes(bytes) {
+          const n = Number(bytes) || 0;
+          if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)}MB`;
+          if (n >= 1024) return `${Math.round(n / 1024)}KB`;
+          return `${n}B`;
+        }
+
+        _renderAttachmentChips() {
+          const box = this._chatAttachmentsEl;
+          if (!box) return;
+          box.textContent = "";
+          if (!this._pendingAttachments.length) {
+            box.classList.remove("pt-has-attachments");
+            return;
+          }
+          box.classList.add("pt-has-attachments");
+          const doc = this.ownerDocument;
+          for (const att of this._pendingAttachments) {
+            const chip = doc.createElementNS(xhtmlNS, "div");
+
+            const remove = doc.createElementNS(xhtmlNS, "button");
+            remove.setAttribute("type", "button");
+            remove.setAttribute("title", "첨부 제거");
+            remove.setAttribute("aria-label", "첨부 제거");
+            remove.textContent = "×";
+            remove.addEventListener("click", () => {
+              this._pendingAttachments = this._pendingAttachments.filter(a => a.id !== att.id);
+              this._renderAttachmentChips();
+            });
+
+            if (att.kind === "image" && att.bytes && att.mimeType) {
+              // 라벨 텍스트 없이 이미지 썸네일만 표시 (×는 모서리 오버레이)
+              chip.className = "pt-attach-chip pt-attach-chip-image";
+              remove.className = "pt-attach-chip-remove pt-attach-img-remove";
+              chip.appendChild(remove);
+              // canvas 디코딩은 비동기 — × 버튼 앞에 삽입된다
+              this._renderImageInto(chip, att, "pt-attach-chip-img", remove);
+            } else {
+              chip.className = "pt-attach-chip";
+              if (att.text) chip.setAttribute("title", att.text.slice(0, 400));
+
+              const head = doc.createElementNS(xhtmlNS, "div");
+              head.className = "pt-attach-chip-head";
+
+              const sourceEl = doc.createElementNS(xhtmlNS, "strong");
+              sourceEl.className = "pt-attach-chip-source";
+              sourceEl.textContent = att.label;
+
+              remove.className = "pt-attach-chip-remove";
+
+              head.appendChild(sourceEl);
+              head.appendChild(remove);
+              chip.appendChild(head);
+
+              const preview = doc.createElementNS(xhtmlNS, "div");
+              preview.className = "pt-attach-chip-preview";
+              preview.textContent = this._attachmentPreview(att);
+              chip.appendChild(preview);
+            }
+
+            box.appendChild(chip);
+          }
+        }
+
+        // ── + 버튼: OS 파일 선택창(Finder)으로 파일 첨부 ─────────────────────
+        _openFilePicker() {
+          try {
+            const win = this.ownerDocument && this.ownerDocument.defaultView;
+            if (!win) return;
+            const Ci = Components.interfaces;
+            const fp = Components.classes["@mozilla.org/filepicker;1"]
+              .createInstance(Ci.nsIFilePicker);
+            const title = "대화에 첨부할 파일 선택";
+            // Gecko 버전에 따라 init 시그니처가 다름 (browsingContext vs window)
+            try {
+              fp.init(win.browsingContext, title, Ci.nsIFilePicker.modeOpen);
+            } catch (_) {
+              fp.init(win, title, Ci.nsIFilePicker.modeOpen);
+            }
+            try {
+              fp.appendFilter("텍스트/이미지/PDF", "*.txt; *.md; *.json; *.csv; *.html; *.xml; *.tex; *.png; *.jpg; *.jpeg; *.webp; *.pdf");
+              fp.appendFilters(Ci.nsIFilePicker.filterAll);
+            } catch (_) { /* 필터 실패해도 picker는 동작 */ }
+            fp.open(rv => {
+              try {
+                if (rv !== Ci.nsIFilePicker.returnOK || !fp.file) return;
+                this._attachLocalFile(fp.file.path, fp.file.leafName).catch(e => {
+                  PaperFlowReaderSidebar._reportError("attach local file failed", e);
+                  this._setStatus(`첨부 실패: ${e.message}`);
+                });
+              } catch (e) {
+                PaperFlowReaderSidebar._reportError("file picker callback failed", e);
+              }
+            });
+          } catch (e) {
+            PaperFlowReaderSidebar._reportError("file picker open failed", e);
+            this._setStatus("파일 선택창을 열지 못했습니다.");
+          }
+        }
+
+        async _attachLocalFile(path, name) {
+          const ext = (String(name || "").split(".").pop() || "").toLowerCase();
+          const IMAGE_MIME = {
+            png: "image/png",
+            jpg: "image/jpeg",
+            jpeg: "image/jpeg",
+            webp: "image/webp",
+            heic: "image/heic",
+            heif: "image/heif",
+          };
+          const TEXT_EXTS = [
+            "txt", "md", "markdown", "json", "csv", "tsv", "html", "htm",
+            "xml", "tex", "log", "yaml", "yml", "js", "py", "java", "c", "cpp", "h",
+          ];
+          const MAX_TEXT = 12000;
+          const MAX_IMAGE_BYTES = 6 * 1024 * 1024;  // Gemini inline 한도 고려
+          const MAX_PDF_BYTES = 10 * 1024 * 1024;
+
+          this._setStatus(`"${name}" 첨부 중...`);
+
+          if (IMAGE_MIME[ext]) {
+            const bytes = await this._readFileBytes(path);
+            if (bytes.length > MAX_IMAGE_BYTES) {
+              this._setStatus(`이미지가 너무 큽니다. (${this._formatBytes(bytes.length)} > 6MB)`);
+              return;
+            }
+            this._addMediaAttachment({
+              kind: "image",
+              label: name,
+              mimeType: IMAGE_MIME[ext],
+              data: this._bytesToBase64(bytes),
+              sizeBytes: bytes.length,
+              bytes,
+            });
+            return;
+          }
+
+          if (ext === "pdf") {
+            const bytes = await this._readFileBytes(path);
+            if (bytes.length > MAX_PDF_BYTES) {
+              this._setStatus(`PDF가 너무 큽니다. (${this._formatBytes(bytes.length)} > 10MB)`);
+              return;
+            }
+            this._addMediaAttachment({
+              kind: "media-pdf",
+              label: name,
+              mimeType: "application/pdf",
+              data: this._bytesToBase64(bytes),
+              sizeBytes: bytes.length,
+            });
+            return;
+          }
+
+          if (TEXT_EXTS.includes(ext)) {
+            let text = await Zotero.File.getContentsAsync(path);
+            if (ext === "html" || ext === "htm") text = this._plainTextWithBreaks(text);
+            text = (text || "").trim();
+            if (!text) {
+              this._setStatus(`"${name}"에서 텍스트를 읽지 못했습니다.`);
+              return;
+            }
+            const truncated = text.length > MAX_TEXT;
+            if (truncated) text = text.slice(0, MAX_TEXT);
+            this._pendingAttachments.push({
+              id: ++this._attachmentSeq,
+              kind: "file",
+              source: "file",
+              label: name,
+              text,
+              truncated,
+            });
+            this._renderAttachmentChips();
+            this._setStatus(`"${name}" 첨부됨 (${text.length}자${truncated ? ", 잘림" : ""})`);
+            return;
+          }
+
+          this._setStatus("지원하지 않는 파일 형식입니다. (텍스트/이미지/PDF)");
+        }
+
+        async _readFileBytes(path) {
+          if (typeof IOUtils !== "undefined" && typeof IOUtils.read === "function") {
+            return IOUtils.read(path);
+          }
+          throw new Error("IOUtils를 사용할 수 없습니다.");
+        }
+
+        _bytesToBase64(bytes) {
+          let binary = "";
+          const CHUNK = 0x8000;
+          for (let i = 0; i < bytes.length; i += CHUNK) {
+            binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+          }
+          const win = this.ownerDocument && this.ownerDocument.defaultView;
+          return (win && win.btoa) ? win.btoa(binary) : btoa(binary);
+        }
+
+        // 이미지 바이트를 URL 로딩 경로 없이 직접 디코딩해 canvas에 그린다.
+        // chrome 문서에서는 data:/blob: URL 이미지 로딩이 막힐 수 있으므로
+        // createImageBitmap(보안 정책 미적용)이 가장 확실한 표시 방법이다.
+        _renderImageInto(container, att, className, beforeNode) {
+          try {
+            const doc = this.ownerDocument;
+            const win = doc && doc.defaultView;
+            if (!win || !att.bytes || typeof win.createImageBitmap !== "function") {
+              this._renderImageFallback(container, att, beforeNode);
+              return;
+            }
+            const BlobCtor = win.Blob || Blob;
+            const blob = new BlobCtor([att.bytes], { type: att.mimeType || "image/png" });
+            win.createImageBitmap(blob)
+              .then(bitmap => {
+                const canvas = doc.createElementNS(xhtmlNS, "canvas");
+                canvas.className = className;
+                canvas.width = bitmap.width;
+                canvas.height = bitmap.height;
+                canvas.setAttribute("title", `${att.label} (${this._formatBytes(att.sizeBytes)})`);
+                const ctx = canvas.getContext("2d");
+                ctx.drawImage(bitmap, 0, 0);
+                if (typeof bitmap.close === "function") bitmap.close();
+                if (beforeNode && beforeNode.parentNode === container) {
+                  container.insertBefore(canvas, beforeNode);
+                } else {
+                  container.appendChild(canvas);
+                }
+                PaperFlowReaderSidebar._clog(`thumbnail decoded: ${canvas.width}x${canvas.height} (${att.mimeType})`);
+              })
+              .catch(err => {
+                PaperFlowReaderSidebar._warn(`thumbnail decode failed: ${att.label}: ${err.message}`);
+                this._renderImageFallback(container, att, beforeNode);
+              });
+          } catch (e) {
+            PaperFlowReaderSidebar._warn(`thumbnail render failed: ${att.label}: ${e.message}`);
+            this._renderImageFallback(container, att, beforeNode);
+          }
+        }
+
+        _renderImageFallback(container, att, beforeNode) {
+          try {
+            const fallback = this.ownerDocument.createElementNS(xhtmlNS, "div");
+            fallback.className = "pt-attach-chip-preview";
+            fallback.textContent = `${att.label} (${this._formatBytes(att.sizeBytes)})`;
+            if (beforeNode && beforeNode.parentNode === container) {
+              container.insertBefore(fallback, beforeNode);
+            } else {
+              container.appendChild(fallback);
+            }
+          } catch (_) { /* noop */ }
+        }
+
+        _addMediaAttachment({ kind, label, mimeType, data, sizeBytes, bytes }) {
+          this._pendingAttachments.push({
+            id: ++this._attachmentSeq,
+            kind,
+            source: "file",
+            label,
+            mimeType,
+            data,
+            sizeBytes,
+            bytes: bytes || null, // 썸네일 디코딩용 원본 바이트
+            truncated: false,
+          });
+          this._renderAttachmentChips();
+          this._setStatus(`"${label}" 첨부됨 (${this._formatBytes(sizeBytes)})`);
+          PaperFlowReaderSidebar._clog(
+            `media attached: kind=${kind} mime=${mimeType} size=${sizeBytes}B chips=${this._pendingAttachments.length}`
+          );
+        }
+
+        // ── 클립보드 이미지 붙여넣기 (⌘V) ───────────────────────────────────
+        _handlePaste(e) {
+          try {
+            const cd = e.clipboardData;
+            let file = null;
+            let type = "";
+
+            // 진단: ⌘V가 핸들러에 도달했는지, 클립보드에 뭐가 보이는지 항상 기록
+            try {
+              const itemTypes = cd && cd.items
+                ? Array.from(cd.items).map(i => `${i.kind}:${i.type || "?"}`).join(", ")
+                : "(none)";
+              PaperFlowReaderSidebar._clog(
+                `paste event: items=[${itemTypes}] files=${cd && cd.files ? cd.files.length : 0}`
+              );
+            } catch (_) { /* noop */ }
+
+            // 경로 1: 표준 DataTransfer items
+            if (cd && cd.items) {
+              for (const item of cd.items) {
+                if (item.kind === "file" && item.type && item.type.startsWith("image/")) {
+                  const f = item.getAsFile();
+                  if (f) { file = f; type = item.type; break; }
+                }
+              }
+            }
+            // 경로 2: DataTransfer files
+            if (!file && cd && cd.files && cd.files.length) {
+              for (const f of cd.files) {
+                if (f.type && f.type.startsWith("image/")) { file = f; type = f.type; break; }
+              }
+            }
+
+            if (file) {
+              e.preventDefault(); // 이미지일 때만 기본 붙여넣기 차단
+              PaperFlowReaderSidebar._clog(`paste: image via DataTransfer (${type}, ${file.size}B)`);
+              this._attachImageFile(file, type);
+              return;
+            }
+
+            // 경로 3: chrome 환경에서 clipboardData가 이미지를 노출하지 않는 경우 —
+            // nsIClipboard에서 직접 읽는다
+            const img = this._readClipboardImage();
+            PaperFlowReaderSidebar._clog(
+              `paste: nsIClipboard=${img ? `${img.mimeType}/${img.bytes.length}B` : "none"}`
+            );
+            if (img) {
+              e.preventDefault();
+              const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
+              if (img.bytes.length > MAX_IMAGE_BYTES) {
+                this._setStatus(`이미지가 너무 큽니다. (${this._formatBytes(img.bytes.length)} > 6MB)`);
+                return;
+              }
+              this._addMediaAttachment({
+                kind: "image",
+                label: `클립보드 이미지 ${new Date().toLocaleTimeString("ko-KR", { hour12: false })}`,
+                mimeType: img.mimeType,
+                data: this._bytesToBase64(img.bytes),
+                sizeBytes: img.bytes.length,
+                bytes: img.bytes,
+              });
+            }
+          } catch (err) {
+            PaperFlowReaderSidebar._reportError("paste handling failed", err);
+          }
+        }
+
+        _attachImageFile(file, type) {
+          const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
+          if (file.size > MAX_IMAGE_BYTES) {
+            this._setStatus(`이미지가 너무 큽니다. (${this._formatBytes(file.size)} > 6MB)`);
+            return;
+          }
+          const genericName = !file.name || /^image\.(png|jpe?g|webp)$/i.test(file.name);
+          const label = genericName
+            ? `클립보드 이미지 ${new Date().toLocaleTimeString("ko-KR", { hour12: false })}`
+            : file.name;
+          file.arrayBuffer()
+            .then(buf => {
+              const bytes = new Uint8Array(buf);
+              this._addMediaAttachment({
+                kind: "image",
+                label,
+                mimeType: type || file.type || "image/png",
+                data: this._bytesToBase64(bytes),
+                sizeBytes: file.size,
+                bytes,
+              });
+            })
+            .catch(err => {
+              PaperFlowReaderSidebar._reportError("clipboard image read failed", err);
+              this._setStatus(`이미지 첨부 실패: ${err.message}`);
+            });
+        }
+
+        // nsIClipboard에서 이미지 플레이버를 직접 읽기 (스크린샷 ⌘⇧⌃4 등)
+        _readClipboardImage() {
+          try {
+            const Ci = Components.interfaces;
+            const Cc = Components.classes;
+            const clip = Cc["@mozilla.org/widget/clipboard;1"].getService(Ci.nsIClipboard);
+
+            for (const flavor of ["image/png", "image/jpeg", "image/jpg"]) {
+              try {
+                const trans = Cc["@mozilla.org/widget/transferable;1"]
+                  .createInstance(Ci.nsITransferable);
+                trans.init(null);
+                trans.addDataFlavor(flavor);
+                clip.getData(trans, clip.kGlobalClipboard);
+
+                const dataObj = {};
+                // Gecko 버전에 따라 getTransferData 시그니처가 다름 (2-arg vs 3-arg)
+                try {
+                  trans.getTransferData(flavor, dataObj);
+                } catch (_) {
+                  trans.getTransferData(flavor, dataObj, {});
+                }
+                if (!dataObj.value) continue;
+
+                let istream = null;
+                try {
+                  istream = dataObj.value.QueryInterface(Ci.nsIInputStream);
+                } catch (_) {
+                  continue;
+                }
+                const bstream = Cc["@mozilla.org/binaryinputstream;1"]
+                  .createInstance(Ci.nsIBinaryInputStream);
+                bstream.setInputStream(istream);
+                const avail = bstream.available();
+                if (!avail) continue;
+                const bytes = new Uint8Array(bstream.readByteArray(avail));
+                const mimeType = flavor === "image/jpg" ? "image/jpeg" : flavor;
+                return { mimeType, bytes };
+              } catch (_) {
+                continue; // 이 플레이버는 없음 — 다음 시도
+              }
+            }
+          } catch (e) {
+            PaperFlowReaderSidebar._warn(`nsIClipboard image read failed: ${e.message}`);
+          }
+          return null;
+        }
+
         _startTranslation() {
+          if (typeof PTJobQueue !== "undefined" && PTJobQueue.isRunning()) {
+            this._setStatus("다른 번역이 이미 진행 중입니다.");
+            return;
+          }
           if (typeof Zotero !== "undefined" && Zotero.PaperTranslator) {
             const win = Zotero.getMainWindow();
             Zotero.PaperTranslator.runTranslation(win, this._item)
@@ -715,13 +1310,15 @@ var PaperFlowReaderSidebar = {
         _loadData() {
           const loadSeq = ++this._loadSeq;
           this._bundle = null;
+          this._chatHistory = []; // item이 바뀌면 대화 맥락도 초기화
+          this._pendingAttachments = []; // 다른 논문의 첨부가 남지 않도록
+          this._renderAttachmentChips();
 
           this._setStatus("Loading paper data...");
           this._showStatusBadge("missing", "loading");
           this._setContent("Loading...");
 
           this._chatLog.textContent = "";
-          this._appendBubble("assistant", "안녕하세요. 이 논문의 요약과 번역 내용을 바탕으로 답변할 수 있습니다.");
           this._disableChat("Loading data...");
 
           const parentItem = PaperFlowReaderSidebar._resolveParentItem(this._item) || this._item;
@@ -755,8 +1352,8 @@ var PaperFlowReaderSidebar = {
 
                 this._chatInput.disabled = false;
                 this._chatSend.disabled = false;
+                if (this._chatAttach) this._chatAttach.disabled = false;
                 this._chatLog.textContent = "";
-                this._appendBubble("assistant", "안녕하세요. 이 논문의 요약과 번역 내용을 바탕으로 답변할 수 있습니다.");
 
                 this._renderActiveTabContent();
               } else {
@@ -790,6 +1387,7 @@ var PaperFlowReaderSidebar = {
         _disableChat(message) {
           this._chatInput.disabled = true;
           this._chatSend.disabled = true;
+          if (this._chatAttach) this._chatAttach.disabled = true;
           this._chatLog.textContent = "";
           this._appendBubble("assistant", message || "채팅을 사용할 수 없습니다.");
         }
@@ -866,7 +1464,15 @@ var PaperFlowReaderSidebar = {
             rawTitle.textContent = "Raw JSON";
             const pre = this.ownerDocument.createElementNS(xhtmlNS, "pre");
             pre.className = "pt-raw-json";
-            pre.textContent = JSON.stringify(meta || {}, null, 2) || "{}";
+            // meta에는 번역 본문이 포함되므로 디버그 뷰에서는 길이만 표시
+            const displayMeta = Object.assign({}, meta || {});
+            if (Array.isArray(displayMeta.chunks)) {
+              displayMeta.chunks = displayMeta.chunks.map(c => Object.assign({}, c, {
+                translation: c && c.translation ? `[${c.translation.length} chars]` : "",
+                summary: c && c.summary ? `[${c.summary.length} chars]` : "",
+              }));
+            }
+            pre.textContent = JSON.stringify(displayMeta, null, 2) || "{}";
 
             wrapper.appendChild(table);
             wrapper.appendChild(rawTitle);
@@ -893,7 +1499,43 @@ var PaperFlowReaderSidebar = {
           this._chatSending = true;
           this._chatSend.disabled = true;
 
-          this._appendBubble("user", question);
+          // 보내는 시점의 첨부 스냅샷 (전송 중 칩 조작과 분리)
+          const promptLabelFor = (a) => {
+            if (a.kind === "selection") return `${a.label}에서 드래그한 텍스트`;
+            if (a.kind === "image") return `첨부 이미지 "${a.label}"`;
+            if (a.kind === "media-pdf") return `첨부 PDF "${a.label}"`;
+            return `첨부 파일 "${a.label}"`;
+          };
+          const attachments = this._pendingAttachments.map(a => ({
+            kind: a.kind,
+            label: a.label,
+            text: a.text || "",
+            mimeType: a.mimeType || "",
+            data: a.data || "",
+            bytes: a.bytes || null,
+            sizeBytes: a.sizeBytes || 0,
+            promptLabel: promptLabelFor(a),
+          }));
+
+          const userBubble = this._appendBubble("user", question);
+          if (attachments.length && userBubble) {
+            const doc = this.ownerDocument;
+            // 이미지는 말풍선에 썸네일로 그대로 표시 (GPT/Claude 스타일)
+            for (const a of attachments) {
+              if (a.kind !== "image" || !a.bytes || !a.mimeType) continue;
+              this._renderImageInto(userBubble, a, "pt-msg-img");
+            }
+            // 텍스트 첨부는 무엇이 어디서 왔는지 명시
+            const textAtts = attachments.filter(a => a.kind !== "image");
+            if (textAtts.length) {
+              const note = doc.createElementNS(xhtmlNS, "div");
+              note.className = "pt-msg-attach-note";
+              note.textContent = "첨부: " + textAtts
+                .map(a => `${a.label}${a.kind === "selection" ? " 드래그" : ""}`)
+                .join(", ");
+              userBubble.appendChild(note);
+            }
+          }
           const pending = this._appendBubble("assistant", "답변 생성 중...");
 
           try {
@@ -903,8 +1545,32 @@ var PaperFlowReaderSidebar = {
             const parent = PaperFlowReaderSidebar._resolveParentItem(this._item);
             const title = (parent || this._item)?.getField?.("title") || "제목 없음";
 
-            const answer = await PTChat.ask(question, this._bundle, { title });
+            const answer = await PTChat.ask(question, this._bundle, {
+              title,
+              history: this._chatHistory,
+              attachments: attachments
+                .filter(a => a.text)
+                .map(a => ({ label: a.promptLabel, text: a.text })),
+              media: attachments
+                .filter(a => a.data && a.mimeType)
+                .map(a => ({ label: a.promptLabel, mimeType: a.mimeType, data: a.data })),
+            });
             if (pending) pending.textContent = answer;
+            // 후속 질문("그 발췌에서...")이 이어지도록 첨부 사실을 이력에 남긴다
+            const historyUserText = attachments.length
+              ? `${question}\n(첨부: ${attachments.map(a => a.promptLabel).join(", ")})`
+              : question;
+            this._chatHistory.push(
+              { role: "user", text: historyUserText },
+              { role: "assistant", text: answer }
+            );
+            // 사용된 첨부는 비운다 (대화 이력에 맥락이 남음)
+            this._pendingAttachments = [];
+            this._renderAttachmentChips();
+            // 메모리 무한 증가 방지 — PTChat이 어차피 최근 턴만 사용한다
+            if (this._chatHistory.length > 24) {
+              this._chatHistory = this._chatHistory.slice(-24);
+            }
             this._chatInput.value = "";
           } catch (e) {
             if (pending) {
@@ -981,11 +1647,11 @@ var PaperFlowReaderSidebar = {
         }
       };
 
-      win.customElements.define("paperflow-reader-panel", PanelElement);
-      this._clog("paperflow-reader-panel custom element defined");
+      win.customElements.define(this.ELEMENT_NAME, PanelElement);
+      this._clog(`${this.ELEMENT_NAME} custom element defined`);
       return true;
     } catch (e) {
-      this._warn(`paperflow-reader-panel define failed: ${e.message}`);
+      this._warn(`${this.ELEMENT_NAME} define failed: ${e.message}`);
       return false;
     }
   },
@@ -1047,7 +1713,7 @@ var PaperFlowReaderSidebar = {
     try {
       const document_ = doc || body.ownerDocument || null;
       this._ensureReaderPanelElement(document_);
-      const panel = body.querySelector ? body.querySelector("paperflow-reader-panel") : null;
+      const panel = body.querySelector ? body.querySelector(this.ELEMENT_NAME) : null;
       if (panel) {
         panel.item = item || null;
       }
@@ -1148,6 +1814,14 @@ var PaperFlowReaderSidebar = {
   _ensureSidenavOrder() {
     try {
       if (!this._registeredPaneID || typeof Zotero === "undefined" || !Zotero.Prefs) return;
+
+      // 최초 설치 시 한 번만 적용 — 매 시작마다 덮어쓰면 사용자가 바꾼
+      // 패널 순서가 계속 초기화된다
+      if (typeof PTPrefs !== "undefined" && PTPrefs.get("sidenavOrderApplied") === true) {
+        this._clog("sidenav.order already applied once — skip");
+        return;
+      }
+
       const current = Zotero.Prefs.get("sidenav.order") || "";
       let order = current
         ? current.split(",").map((id) => id.trim()).filter(Boolean)
@@ -1157,9 +1831,126 @@ var PaperFlowReaderSidebar = {
       order.push(this._registeredPaneID);
 
       Zotero.Prefs.set("sidenav.order", order.join(","));
+      if (typeof PTPrefs !== "undefined") PTPrefs.set("sidenavOrderApplied", true);
       this._clog(`sidenav.order updated (moved to bottom): ${this._registeredPaneID}`);
     } catch (e) {
       this._warn(`sidenav.order update skipped: ${e.message}`);
+    }
+  },
+
+  // ── PDF 리더 텍스트 드래그 → 채팅 첨부 ───────────────────────────────────
+  // Zotero 7+ 플러그인 API: 선택 팝업이 뜰 때 선택 텍스트를 받아온다
+  _registerReaderSelectionListener() {
+    if (this._selectionListener) return;
+    try {
+      if (typeof Zotero === "undefined"
+        || !Zotero.Reader
+        || typeof Zotero.Reader.registerEventListener !== "function") {
+        this._warn("Zotero.Reader.registerEventListener unavailable — PDF 드래그 첨부 비활성");
+        return;
+      }
+      this._selectionListener = (event) => {
+        try {
+          const text = (event?.params?.annotation?.text || "").trim();
+          if (text.length < 2) return; // 빈 선택만 무시 (짧은 용어도 첨부 가능)
+          this._broadcastPdfSelection(event?.reader?.itemID, text);
+          this._watchPdfSelectionPopup(event);
+        } catch (e) {
+          this._warn(`reader selection capture failed: ${e.message}`);
+        }
+      };
+      Zotero.Reader.registerEventListener(
+        "renderTextSelectionPopup",
+        this._selectionListener,
+        this.PLUGIN_ID
+      );
+      this._clog("reader text selection listener registered");
+    } catch (e) {
+      this._warn(`reader selection listener register failed: ${e.message}`);
+      this._selectionListener = null;
+    }
+  },
+
+  _unregisterReaderSelectionListener() {
+    if (!this._selectionListener) return;
+    try {
+      if (typeof Zotero !== "undefined"
+        && Zotero.Reader
+        && typeof Zotero.Reader.unregisterEventListener === "function") {
+        Zotero.Reader.unregisterEventListener("renderTextSelectionPopup", this._selectionListener);
+      }
+    } catch (e) {
+      this._warn(`reader selection listener unregister failed: ${e.message}`);
+    } finally {
+      this._selectionListener = null;
+    }
+  },
+
+  // 리더 선택 팝업에 숨김 마커를 심고, 팝업이 DOM에서 사라지면(=선택 해제)
+  // PDF 드래그 첨부를 제거한다. 새 선택이 생기면 마커가 교체되므로 안전.
+  _watchPdfSelectionPopup(event) {
+    try {
+      if (typeof event?.append !== "function") return;
+      const doc = event.doc
+        || (typeof Zotero !== "undefined" && Zotero.getMainWindow && Zotero.getMainWindow()?.document);
+      if (!doc) return;
+      const marker = doc.createElement("span");
+      marker.style.display = "none";
+      marker.dataset.paperflowSelectionMarker = "1";
+      event.append(marker);
+      this._pdfPopupMarker = marker;
+      this._startPdfMarkerWatch();
+    } catch (e) {
+      this._warn(`pdf popup marker attach failed: ${e.message}`);
+    }
+  },
+
+  _startPdfMarkerWatch() {
+    this._stopPdfMarkerWatch();
+    try {
+      const win = (typeof Zotero !== "undefined" && Zotero.getMainWindow) ? Zotero.getMainWindow() : null;
+      if (!win) return;
+      this._pdfMarkerTimer = win.setInterval(() => {
+        const marker = this._pdfPopupMarker;
+        if (marker && marker.isConnected) return;
+        this._stopPdfMarkerWatch();
+        this._pdfPopupMarker = null;
+        for (const panel of this._activePanels) {
+          try { panel.removeSelectionAttachment("pdf"); } catch (_) { /* noop */ }
+        }
+      }, 400);
+    } catch (e) {
+      this._warn(`pdf marker watch start failed: ${e.message}`);
+    }
+  },
+
+  _stopPdfMarkerWatch() {
+    if (!this._pdfMarkerTimer) return;
+    try {
+      const win = (typeof Zotero !== "undefined" && Zotero.getMainWindow) ? Zotero.getMainWindow() : null;
+      if (win) win.clearInterval(this._pdfMarkerTimer);
+    } catch (_) { /* noop */ }
+    this._pdfMarkerTimer = null;
+  },
+
+  // 리더에서 드래그된 텍스트를, 같은 논문을 보고 있는 panel에만 전달
+  _broadcastPdfSelection(readerAttachmentID, text) {
+    try {
+      if (readerAttachmentID == null) return;
+      let parentID = readerAttachmentID;
+      if (typeof Zotero !== "undefined" && Zotero.Items) {
+        const att = Zotero.Items.get(readerAttachmentID);
+        if (att && att.parentItemID) parentID = att.parentItemID;
+      }
+      for (const panel of this._activePanels) {
+        try {
+          if (panel.isConnected && panel.matchesParentItemID(parentID)) {
+            panel.addSelectionAttachment("pdf", text);
+          }
+        } catch (_) { /* noop */ }
+      }
+    } catch (e) {
+      this._warn(`pdf selection broadcast failed: ${e.message}`);
     }
   },
 
