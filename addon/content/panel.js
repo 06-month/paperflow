@@ -153,12 +153,14 @@ window.PTPanel = {
     if (typeof PTLogger === "undefined") load("src/utils/logger.js");
     if (typeof PTPrefs === "undefined") load("src/utils/prefs.js");
     if (typeof PTApiError === "undefined") load("src/utils/errors.js");
+    if (typeof PTMarkdown === "undefined") load("src/utils/markdown.js");
     if (typeof PTRateLimiter === "undefined") load("src/modules/rateLimiter.js");
     if (typeof PTStorage === "undefined") load("src/modules/storage.js");
     if (typeof PTChat === "undefined") load("src/modules/chat.js");
     this._logScriptState("PTLogger", typeof PTLogger !== "undefined");
     this._logScriptState("PTPrefs", typeof PTPrefs !== "undefined");
     this._logScriptState("PTApiError", typeof PTApiError !== "undefined");
+    this._logScriptState("PTMarkdown", typeof PTMarkdown !== "undefined");
     this._logScriptState("PTStorage", typeof PTStorage !== "undefined");
     this._logScriptState("PTChat", typeof PTChat !== "undefined");
     if (typeof PTStorage === "undefined") {
@@ -458,14 +460,25 @@ window.PTPanel = {
     this._renderMetaContent(this.bundle.meta || {});
   },
 
-  // 모델 응답은 항상 textContent로만 삽입 (innerHTML 금지)
+  // 사용자 입력은 평문, 모델 응답은 안전한 DOM 기반 Markdown으로 렌더링한다.
   _appendBubble(role, text) {
     const log = this._el("pt-chat-log");
     if (!log) return null;
-    const div = this._createHTML("div", `pt-msg pt-msg-${role}`, text);
+    const div = this._createHTML("div", `pt-msg pt-msg-${role}`);
+    if (role === "assistant") this._renderMarkdown(div, text);
+    else div.textContent = String(text || "");
     log.appendChild(div);
     log.scrollTop = log.scrollHeight;
     return div;
+  },
+
+  _renderMarkdown(target, text) {
+    if (!target) return;
+    if (typeof PTMarkdown !== "undefined" && typeof PTMarkdown.renderInto === "function") {
+      PTMarkdown.renderInto(target, text);
+    } else {
+      target.textContent = String(text || "");
+    }
   },
 
   async _ask() {
@@ -486,7 +499,7 @@ window.PTPanel = {
       const answer = await PTChat.ask(question, this.bundle, {
         title: this.parentItem?.getField("title") || "제목 없음",
       });
-      if (pending) pending.textContent = answer;
+      if (pending) this._renderMarkdown(pending, answer);
       input.value = "";
     } catch (e) {
       if (pending) {

@@ -1,3 +1,5 @@
+@import url("markdown.css");
+
 /* PaperFlow reader/item-pane sidenav icon: gray by default, blue on
  * hover/selected. Keyed on Zotero's own stable `data-pane` attribute
  * (no DOM appending). The default gray icon is set via the registerSection

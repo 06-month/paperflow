@@ -17,6 +17,7 @@ async function startup({ id, version, rootURI }) {
   Services.scriptloader.loadSubScript(rootURI + "src/utils/prefs.js");
   Services.scriptloader.loadSubScript(rootURI + "src/utils/errors.js");
   Services.scriptloader.loadSubScript(rootURI + "src/utils/tokenEstimate.js");
+  Services.scriptloader.loadSubScript(rootURI + "src/utils/markdown.js");
 
   // ── 모듈 로드 ─────────────────────────────────────────────────────────────
   Services.scriptloader.loadSubScript(rootURI + "src/modules/itemResolver.js");
