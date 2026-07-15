@@ -1555,7 +1555,7 @@ var PaperFlowReaderSidebar = {
                 .filter(a => a.data && a.mimeType)
                 .map(a => ({ label: a.promptLabel, mimeType: a.mimeType, data: a.data })),
             });
-            if (pending) pending.textContent = answer;
+            if (pending) this._renderMarkdown(pending, answer);
             // 후속 질문("그 발췌에서...")이 이어지도록 첨부 사실을 이력에 남긴다
             const historyUserText = attachments.length
               ? `${question}\n(첨부: ${attachments.map(a => a.promptLabel).join(", ")})`
@@ -1586,10 +1586,20 @@ var PaperFlowReaderSidebar = {
         _appendBubble(role, text) {
           const div = this.ownerDocument.createElementNS(xhtmlNS, "div");
           div.className = `pt-msg pt-msg-${role}`;
-          div.textContent = String(text || "");
+          if (role === "assistant") this._renderMarkdown(div, text);
+          else div.textContent = String(text || "");
           this._chatLog.appendChild(div);
           this._chatLog.scrollTop = this._chatLog.scrollHeight;
           return div;
+        }
+
+        _renderMarkdown(target, text) {
+          if (!target) return;
+          if (typeof PTMarkdown !== "undefined" && typeof PTMarkdown.renderInto === "function") {
+            PTMarkdown.renderInto(target, text);
+          } else {
+            target.textContent = String(text || "");
+          }
         }
 
         _appendSanitizedChildren(source, target) {
