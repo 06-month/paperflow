@@ -6,7 +6,7 @@
   Summarize, translate, inspect metadata, and ask paper-specific questions without leaving Zotero.
 </p>
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.5.2-blue">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.5.3-blue">
   <img alt="Status" src="https://img.shields.io/badge/status-experimental-orange">
   <img alt="Zotero" src="https://img.shields.io/badge/Zotero-7%2B-red">
   <img alt="AI" src="https://img.shields.io/badge/AI-Gemini-7c3aed">
@@ -66,7 +66,7 @@ Read → Summarize → Translate → Inspect → Ask
 Download the latest release XPI from GitHub Releases:
 
 ```
-https://github.com/06-month/paperflow/releases/tag/v0.5.2
+https://github.com/06-month/paperflow/releases/tag/v0.5.3
 ```
 
 **Install in Zotero:**

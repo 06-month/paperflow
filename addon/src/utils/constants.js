@@ -3,7 +3,7 @@
 // 플러그인 전역 상수. 모델명/버전은 반드시 여기서만 정의한다.
 var PTConstants = {
   // manifest.json의 version과 일치시킬 것
-  VERSION: "0.5.2",
+  VERSION: "0.5.3",
 
   MODEL_NAME: "gemini-3.1-flash-lite",
   MODEL_LABEL: "Gemini 3.1 Flash-Lite",

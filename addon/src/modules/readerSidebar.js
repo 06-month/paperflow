@@ -1511,19 +1511,37 @@ var PaperFlowReaderSidebar = {
           this._loadData();
         }
 
-        _loadData() {
+        // 같은 논문의 번역 결과만 새로 읽는다. item 전환이 아니므로 대화 맥락과
+        // 첨부는 유지한다.
+        reloadBundle() {
+          if (!this._rendered || !this._item) return;
+          this._loadData({ preserveChat: true });
+        }
+
+        _loadData(options = {}) {
+          const preserveChat = options.preserveChat === true;
+          // 실제 대화가 있을 때만 로그를 남긴다. 번역 전의 "번역 결과가 없습니다"
+          // 안내 버블은 갱신 후 그대로 두면 오해를 부르므로 지운다.
+          const keepChatLog = preserveChat && this._chatHistory.length > 0;
           const loadSeq = ++this._loadSeq;
           this._bundle = null;
-          this._chatHistory = []; // item이 바뀌면 대화 맥락도 초기화
-          this._pendingAttachments = []; // 다른 논문의 첨부가 남지 않도록
-          this._renderAttachmentChips();
+          if (!preserveChat) {
+            this._chatHistory = []; // item이 바뀌면 대화 맥락도 초기화
+            this._pendingAttachments = []; // 다른 논문의 첨부가 남지 않도록
+            this._renderAttachmentChips();
+          }
 
           this._setStatus("Loading paper data...");
           this._showStatusBadge("missing", "loading");
-          this._setContent("Loading...");
+          if (!preserveChat) this._setContent("Loading...");
 
-          this._chatLog.textContent = "";
-          this._disableChat("Loading data...");
+          // 새로고침일 때는 진행 중인 대화와 화면을 그대로 두고 조용히 다시 읽는다.
+          if (!preserveChat) {
+            this._chatLog.textContent = "";
+            this._disableChat("Loading data...");
+          } else if (!keepChatLog) {
+            this._chatLog.textContent = "";
+          }
 
           const parentItem = PaperFlowReaderSidebar._resolveParentItem(this._item) || this._item;
 
@@ -1558,7 +1576,7 @@ var PaperFlowReaderSidebar = {
                 this._chatSend.disabled = false;
                 if (this._chatAttach) this._chatAttach.disabled = false;
                 this._syncComposerHint();
-                this._chatLog.textContent = "";
+                if (!keepChatLog) this._chatLog.textContent = "";
 
                 this._renderActiveTabContent();
               } else {
@@ -2212,6 +2230,21 @@ var PaperFlowReaderSidebar = {
       if (win) win.clearInterval(this._pdfMarkerTimer);
     } catch (_) { /* noop */ }
     this._pdfMarkerTimer = null;
+  },
+
+  // 번역 저장 직후, 같은 논문을 보고 있는 사이드바/패널을 새로 읽게 한다.
+  // 이게 없으면 Reader 사이드바는 item이 바뀔 때까지 옛 결과를 계속 보여준다.
+  notifyTranslationSaved(parentItemID) {
+    if (parentItemID == null) return;
+    for (const panel of this._activePanels) {
+      try {
+        if (!panel.isConnected) continue;
+        if (!panel.matchesParentItemID(parentItemID)) continue;
+        panel.reloadBundle();
+      } catch (e) {
+        this._warn(`translation refresh failed: ${e.message}`);
+      }
+    }
   },
 
   // 리더에서 드래그된 텍스트를, 같은 논문을 보고 있는 panel에만 전달

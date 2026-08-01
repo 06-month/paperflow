@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.5.3
+
+- Fix the Reader sidebar not picking up a finished translation. The sidebar only reloaded its data when the selected item changed, so after **Tools → Translate Paper** it kept showing the previous result — or "번역 결과가 없습니다" — until you clicked away and back. Saving a translation now tells every open sidebar and panel showing that paper to reload. Partial results saved on cancel or error refresh the same way.
+- The refresh keeps the tab you were on and any chat in progress; only the stored result is re-read.
+
 ## v0.5.2
 
 - Remove the PDF split output entirely, along with the folder preference added in v0.5.1. Everything the translation needs — page renders and Figure/Table crops — is produced in memory and embedded in `translated.ko.html` as base64, and nothing ever read the files back, so writing them only cost a second full-page PNG encode plus a disk write per page. Translations of long papers are faster and PaperFlow no longer leaves tens of MB per paper on disk.

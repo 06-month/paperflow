@@ -339,6 +339,8 @@ class PaperTranslatorAddon {
             return;
           }
 
+          this._notifyTranslationSaved(targetItem);
+
           try {
             progressWin.update("저장 완료", 100);
             progressWin.setDone(true);
@@ -355,6 +357,7 @@ class PaperTranslatorAddon {
           // 취소/오류 시에도 완료된 chunk는 저장한다
           const hasPartial = jobs.some(j => j.status === "done");
           const finish = (savedOk) => {
+            if (savedOk && hasPartial) this._notifyTranslationSaved(targetItem);
             const saveNote = hasPartial
               ? (savedOk ? " — 부분 결과 저장됨" : " — 부분 결과 저장 실패")
               : "";
@@ -721,6 +724,20 @@ class PaperTranslatorAddon {
       win.setTimeout(() => attach(), 0);
     } catch (_) {
       attach();
+    }
+  }
+
+  // 저장된 결과를 열려 있는 Reader 사이드바/패널에 즉시 반영시킨다.
+  // 사이드바는 item이 바뀔 때만 다시 읽으므로, 알리지 않으면 번역이 끝나도
+  // 이전 결과(또는 "번역 결과가 없습니다")를 계속 보여준다.
+  _notifyTranslationSaved(targetItem) {
+    try {
+      const id = targetItem?.id;
+      if (id == null) return;
+      if (typeof PaperFlowReaderSidebar === "undefined") return;
+      PaperFlowReaderSidebar.notifyTranslationSaved(id);
+    } catch (e) {
+      PTLogger.warn(`번역 결과 UI 갱신 실패: ${e.message}`);
     }
   }
 

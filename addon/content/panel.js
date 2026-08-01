@@ -551,6 +551,36 @@ window.PTPanel = {
     return Boolean(this.parentItem && Number(this.parentItem.id) === Number(parentItemID));
   },
 
+  // 번역이 저장되면 호출된다. 보고 있던 탭과 진행 중인 대화는 그대로 두고
+  // 저장된 결과만 다시 읽는다.
+  async reloadBundle() {
+    if (!this.parentItem || typeof PTStorage === "undefined" || !PTStorage.loadBundle) return;
+    try {
+      this.bundle = await PTStorage.loadBundle(this.parentItem);
+      this.bundleError = null;
+      this.unavailableMessage = null;
+    } catch (e) {
+      this.bundleError = e;
+      this._logPanelError("reload bundle", e);
+      return;
+    }
+    try {
+      this._renderHeader();
+      this._renderActiveView();
+      this._setStatus("번역 결과가 갱신되었습니다.");
+    } catch (e) {
+      this._logPanelError("reload render", e);
+    }
+  },
+
+  _renderActiveView() {
+    const active = document.querySelector("#pt-tabs .pt-tab-active");
+    const id = active ? active.id : "pt-tab-summary";
+    if (id === "pt-tab-translation") this._renderTranslation();
+    else if (id === "pt-tab-meta") this._renderMeta();
+    else this._renderSummary();
+  },
+
   _selectionSourceLabel(source) {
     return ({ pdf: "PDF 원문", summary: "Summary", translation: "Translation" })[source] || source;
   },
