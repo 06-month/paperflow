@@ -1655,7 +1655,6 @@ var PaperFlowReaderSidebar = {
               ["layout mode", meta.layout?.mode || meta.layoutAnalysis?.mode || "-"],
               ["source visuals", meta.layout?.stats?.visualBlocks ?? 0],
               ["LaTeX expressions", meta.layout?.stats?.latexExpressions ?? 0],
-              ["PDF split folder", meta.layout?.splitOutput?.rootPath || "-"],
               ["htmlAttachmentID", meta.htmlAttachmentID || meta.htmlAttachmentId || this._bundle?.existing?.htmlAttachmentID || ""],
               ["metaAttachmentID", meta.metaAttachmentID || meta.metaAttachmentId || this._bundle?.existing?.metaAttachmentID || ""],
             ];

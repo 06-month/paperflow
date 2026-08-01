@@ -48,14 +48,10 @@ var PTLayoutAnalyzer = {
     });
 
     let pdfDocument = null;
-    let splitSession = null;
     try {
       pdfDocument = await loadingTask.promise;
       const pageCount = Math.min(pdfDocument.numPages, this.MAX_PAGES);
       const pages = new Array(pageCount);
-      splitSession = typeof PTPdfSplit !== "undefined"
-        ? await PTPdfSplit.begin(pdfAttachment, filePath, pdfDocument.numPages)
-        : null;
       let nextPage = 1;
       let completedPages = 0;
       const concurrency = Math.max(1, Math.min(
@@ -94,13 +90,6 @@ var PTLayoutAnalyzer = {
               blocks,
             };
             pages[pageNumber - 1] = pageRecord;
-            if (splitSession) {
-              await PTPdfSplit.writePage(splitSession, {
-                pageNumber,
-                canvas: rendered.canvas,
-                blocks,
-              });
-            }
             completedPages++;
             options.onProgress?.(completedPages, pageCount, "analyzed");
           } finally {
@@ -115,27 +104,11 @@ var PTLayoutAnalyzer = {
       if (layout.stats.translatableBlocks === 0) {
         throw new PTExtractionError("레이아웃 분석에서 번역 가능한 본문 블록을 찾지 못했습니다.");
       }
-      if (splitSession) {
-        try {
-          layout.splitOutput = await PTPdfSplit.finalize(splitSession, layout);
-        } catch (splitError) {
-          PTLogger.warn(`PDF 분리 폴더 저장 실패: ${splitError.message}`);
-          layout.splitOutput = {
-            status: "failed",
-            error: String(splitError.message || splitError),
-          };
-        }
-      }
       PTLogger.info(
         `레이아웃 분석 완료: ${layout.pageCount}페이지, 본문 ${layout.stats.translatableBlocks}개, `
         + `시각 요소 ${layout.stats.visualBlocks}개`
       );
       return layout;
-    } catch (error) {
-      if (splitSession && typeof PTPdfSplit !== "undefined") {
-        await PTPdfSplit.abort(splitSession, error);
-      }
-      throw error;
     } finally {
       try { await pdfDocument?.destroy(); } catch (_) {}
       try { await loadingTask?.destroy(); } catch (_) {}
@@ -200,7 +173,6 @@ var PTLayoutAnalyzer = {
       pageCount: layout.pageCount,
       sourcePageCount: layout.sourcePageCount,
       stats: layout.stats,
-      splitOutput: layout.splitOutput || null,
       pages: (layout.pages || []).map(page => ({
         pageNumber: page.pageNumber,
         width: page.width,
@@ -225,7 +197,6 @@ var PTLayoutAnalyzer = {
             display: Boolean(math.display),
             label: math.label || "",
           })),
-          splitAssetPath: block.splitAssetPath || null,
           hasVisual: Boolean(block.dataURI),
         })),
       })),

@@ -6,7 +6,7 @@
   Summarize, translate, inspect metadata, and ask paper-specific questions without leaving Zotero.
 </p>
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.5.1-blue">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.5.2-blue">
   <img alt="Status" src="https://img.shields.io/badge/status-experimental-orange">
   <img alt="Zotero" src="https://img.shields.io/badge/Zotero-7%2B-red">
   <img alt="AI" src="https://img.shields.io/badge/AI-Gemini-7c3aed">
@@ -46,7 +46,7 @@ Read → Summarize → Translate → Inspect → Ask
 | Layout-aware translation | Uses page images plus native PDF text coordinates to preserve paragraph and two-column reading order | Implemented with text fallback |
 | Original visual regions | Reconstructs complete Figure/Table regions from the rendered source page and places translated captions directly below them | Implemented (Gemini layout analysis) |
 | LaTeX mathematics | Converts inline/display equations to LaTeX, renders them with native MathML, and preserves numbered equations as `$$...$$` source | Implemented |
-| Local PDF split cache | Saves page renders, page text, Figure/Table images, Markdown, and a manifest under a configurable `PaperFlow_PdfSplit` folder (defaults to the Zotero data directory) | Implemented |
+| Zero disk footprint | Page renders and Figure/Table crops stay in memory; only the Zotero artifacts are written | Implemented |
 | Parallel Gemini processing | Runs page analysis and translation chunks concurrently with configurable concurrency and race-safe RPM/RPD limiting | Implemented |
 | Selection-based chat attachments | Drag text in PDF, Summary, or Translation view — auto-attached to chat with source label | Implemented |
 | File attachment (Finder) | `+` button opens OS file picker; attach images, PDFs, or text files | Implemented |
@@ -66,7 +66,7 @@ Read → Summarize → Translate → Inspect → Ask
 Download the latest release XPI from GitHub Releases:
 
 ```
-https://github.com/06-month/paperflow/releases/tag/v0.5.1
+https://github.com/06-month/paperflow/releases/tag/v0.5.2
 ```
 
 **Install in Zotero:**
@@ -124,7 +124,7 @@ Gemini page layout JSON (heading / paragraph / figure / table / caption / LaTeX 
       ↓
 Stable block IDs, reading order, caption links, and math tokens
       ↓
-PaperFlow_PdfSplit cache + translatable blocks → chunking (≤1500 tokens/chunk)
+Translatable blocks → chunking (≤1500 tokens/chunk)
       ↓
 Parallel Gemini block translation (gemini-3.1-flash-lite)
       ↓
@@ -145,20 +145,7 @@ Paper-context-aware chat with attachment support
 | `translated.ko.html` | Display HTML derived from meta JSON |
 | `[PaperFlow] note` | Zotero note with formatted summary output |
 
-**Local split output per paper:**
-
-```text
-<split directory>/PaperFlow_PdfSplit/<paper>-<attachment-key>/
-├─ document.md
-├─ manifest.json
-├─ text/page-001.txt
-├─ page-renders/page-001.png
-└─ extracted-images/page-001-figure-001.png
-```
-
-`document.md` preserves inline formulas as `$...$` and standalone/numbered formulas as `$$...$$`. The translation UI renders the corresponding sanitized MathML locally without a CDN.
-
-`<split directory>` defaults to your Zotero data directory and can be changed in **Preferences → PaperFlow → PDF 분해 저장 위치**. Page renders make this folder grow by tens of MB per paper, so point it at a disk with room; if the chosen folder becomes unavailable (unplugged drive, revoked permission), PaperFlow falls back to the Zotero data directory instead of failing the translation. The folder actually used is shown in the **Meta** view as *PDF split folder*.
+These three artifacts are self-contained. Page renders and Figure/Table crops live in memory only for the duration of a translation: the visuals are embedded in `translated.ko.html` as base64 data URIs, so nothing on disk outside Zotero is needed to display a finished translation.
 
 ---
 
@@ -204,7 +191,6 @@ paperflow/
 │     │  ├─ cleaner.js
 │     │  ├─ extractor.js
 │     │  ├─ layoutAnalyzer.js  ← page render, text coordinates, Gemini layout JSON, source crops
-│     │  ├─ pdfSplitter.js     ← PaperFlow_PdfSplit page/text/visual/manifest writer
 │     │  └─ itemResolver.js
 │     └─ utils/
 │        ├─ constants.js       ← VERSION, MODEL_NAME, geminiEndpoint()

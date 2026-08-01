@@ -21,7 +21,6 @@ async function startup({ id, version, rootURI }) {
   // ── 모듈 로드 ─────────────────────────────────────────────────────────────
   Services.scriptloader.loadSubScript(rootURI + "src/modules/itemResolver.js");
   Services.scriptloader.loadSubScript(rootURI + "src/modules/extractor.js");
-  Services.scriptloader.loadSubScript(rootURI + "src/modules/pdfSplitter.js");
   Services.scriptloader.loadSubScript(rootURI + "src/modules/layoutAnalyzer.js");
   Services.scriptloader.loadSubScript(rootURI + "src/modules/cleaner.js");
   Services.scriptloader.loadSubScript(rootURI + "src/modules/sectionizer.js");

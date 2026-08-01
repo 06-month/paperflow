@@ -65,19 +65,6 @@
     </html:p>
 
     <hbox align="center" style="margin-top:6px;">
-      <label value="PDF 분해 저장 위치" style="min-width:140px;font-weight:600;"/>
-      <html:input id="pt-split-dir" type="text" readonly="readonly"
-        placeholder="Zotero 데이터 폴더 (기본값)"
-        style="flex:1;padding:5px 8px;border:1px solid var(--fill-quinary);border-radius:4px;font-size:12px;"/>
-      <button label="찾아보기..." oncommand="PTPrefsUI.chooseSplitDirectory()" style="margin-left:6px;"/>
-      <button label="기본값" oncommand="PTPrefsUI.resetSplitDirectory()" style="margin-left:4px;"/>
-    </hbox>
-    <html:p id="pt-split-dir-status" style="font-size:11px;color:var(--fill-secondary);margin:2px 0 4px 144px;">
-      페이지 렌더 이미지, 그림/표, 페이지 텍스트, Markdown이 이 폴더의 PaperFlow_PdfSplit 아래에 저장됩니다.
-      논문 한 편당 수십 MB까지 커질 수 있으니 여유 있는 디스크를 지정하세요.
-    </html:p>
-
-    <hbox align="center" style="margin-top:6px;">
       <label value="섹션 요약 줄 수" style="min-width:140px;font-weight:600;"/>
       <menulist id="pt-summary-lines" oncommand="PTPrefsUI.save('summaryLines', parseInt(this.value,10))"
         style="min-width:80px;">

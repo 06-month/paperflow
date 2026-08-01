@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.5.2
+
+- Remove the PDF split output entirely, along with the folder preference added in v0.5.1. Everything the translation needs — page renders and Figure/Table crops — is produced in memory and embedded in `translated.ko.html` as base64, and nothing ever read the files back, so writing them only cost a second full-page PNG encode plus a disk write per page. Translations of long papers are faster and PaperFlow no longer leaves tens of MB per paper on disk.
+- Drop the now-meaningless *PDF split folder* row from the Meta view.
+
 ## v0.5.1
 
 - Let the PDF split output folder be chosen in **Preferences → PaperFlow → PDF 분해 저장 위치**. It still defaults to the Zotero data directory, the picker rejects folders that are not writable, and a folder that becomes unavailable later (unplugged drive, revoked permission) falls back to the data directory with a warning instead of failing the translation. The folder actually used is already reported in the Meta view as *PDF split folder*.
