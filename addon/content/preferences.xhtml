@@ -38,6 +38,32 @@
         oncommand="PTPrefsUI.save('skipReferences', this.checked)"/>
     </hbox>
 
+    <hbox align="start" style="margin-top:6px;">
+      <checkbox id="pt-layout-aware"
+        label="PDF 레이아웃 분석 사용 (문단·그림·표·수식을 원본 위치 기준으로 분리)"
+        oncommand="PTPrefsUI.save('layoutAwareTranslation', this.checked)"/>
+    </hbox>
+    <html:p style="font-size:11px;color:var(--fill-secondary);margin:2px 0 4px 24px;">
+      활성화하면 PDF 페이지 이미지와 내장 텍스트가 Gemini로 전송됩니다. 분석 실패 시 기존 텍스트 번역으로 자동 전환됩니다.
+    </html:p>
+
+    <hbox align="center" style="margin-top:6px;">
+      <label value="Gemini 병렬 호출 수" style="min-width:140px;font-weight:600;"/>
+      <menulist id="pt-parallel-requests" oncommand="PTPrefsUI.save('parallelRequests', parseInt(this.value,10))"
+        style="min-width:80px;">
+        <menupopup>
+          <menuitem label="2개" value="2"/>
+          <menuitem label="4개" value="4"/>
+          <menuitem label="6개" value="6"/>
+          <menuitem label="8개" value="8"/>
+          <menuitem label="14개" value="14"/>
+        </menupopup>
+      </menulist>
+    </hbox>
+    <html:p style="font-size:11px;color:var(--fill-secondary);margin:2px 0 4px 144px;">
+      페이지 분석과 번역 청크를 동시에 처리합니다. 실제 요청은 Gemini RPM/RPD 제한 안에서 자동 조절됩니다.
+    </html:p>
+
     <hbox align="center" style="margin-top:6px;">
       <label value="섹션 요약 줄 수" style="min-width:140px;font-weight:600;"/>
       <menulist id="pt-summary-lines" oncommand="PTPrefsUI.save('summaryLines', parseInt(this.value,10))"

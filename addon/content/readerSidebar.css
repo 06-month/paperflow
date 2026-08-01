@@ -1,3 +1,5 @@
+@namespace html url("http://www.w3.org/1999/xhtml");
+
 /* PaperFlow reader/item-pane sidenav icon: gray by default, blue on
  * hover/selected. Keyed on Zotero's own stable `data-pane` attribute
  * (no DOM appending). The default gray icon is set via the registerSection
@@ -65,13 +67,17 @@
 
 paperflow-reader-panel {
   display: block;
+  width: 100%;
   min-height: 560px;
+  min-width: 0;
   overflow: hidden;
   box-sizing: border-box;
 }
 
 collapsible-section[data-pane$="paperflow-reader"][open] > [data-type="body"] {
+  width: 100%;
   min-height: 560px;
+  min-width: 0;
   overflow: hidden;
   box-sizing: border-box;
 }
@@ -84,10 +90,12 @@ collapsible-section[data-pane$="paperflow-reader"][open] > [data-type="body"] > 
 #pt-root {
   display: flex;
   flex-direction: column;
+  width: 100%;
   /* 실제 host(reader pane) 높이에 맞춤. 100vh는 pane보다 커서 chat이 보이는
      영역 아래로 밀리는 원인이므로 100%로. */
   height: 100%;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
   padding: 10px 12px;
   gap: 8px;
@@ -101,7 +109,9 @@ collapsible-section[data-pane$="paperflow-reader"][open] > [data-type="body"] > 
 /* ── Main Layout Workspace ────────────────────────────────────────────────── */
 #pt-main {
   flex: 1 1 0;
+  width: 100%;
   min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -192,11 +202,20 @@ collapsible-section[data-pane$="paperflow-reader"][open] > [data-type="body"] > 
 #pt-tabs {
   display: flex;
   flex: 0 0 auto;
+  min-width: 0;
   gap: 6px;
   padding: 2px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+#pt-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .pt-tab {
+  flex: 1 0 auto;
+  min-width: max-content;
   appearance: none;
   border: 1px solid transparent;
   border-radius: var(--pf-r-pill);
@@ -224,7 +243,9 @@ collapsible-section[data-pane$="paperflow-reader"][open] > [data-type="body"] > 
 /* ── Content card (the only vertical scroller) ───────────────────────────── */
 #pt-content {
   flex: 1 1 0;
+  width: 100%;
   min-height: 0;
+  min-width: 0;
   overflow-y: auto;
   overflow-x: hidden;
   border: 1px solid var(--pf-hairline);
@@ -286,7 +307,21 @@ collapsible-section[data-pane$="paperflow-reader"][open] > [data-type="body"] > 
 }
 
 .pt-doc {
+  width: 100%;
   max-width: 100%;
+  min-width: 0;
+  margin: 0;
+}
+
+.pt-doc > *,
+.pt-doc section,
+.pt-doc article,
+.pt-doc div,
+.pt-doc p,
+.pt-doc figure,
+.pt-doc table {
+  max-width: 100%;
+  min-width: 0;
 }
 
 .pt-doc h1,
@@ -324,6 +359,7 @@ collapsible-section[data-pane$="paperflow-reader"][open] > [data-type="body"] > 
 .pt-doc section,
 .pt-doc li {
   line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 .pt-doc p {
@@ -365,15 +401,129 @@ collapsible-section[data-pane$="paperflow-reader"][open] > [data-type="body"] > 
   white-space: pre-wrap;
 }
 
+.pt-translation-view .pt-translation > p,
+.pt-translation-view .pt-original > p {
+  margin: 0 0 1em;
+}
+
+.pt-translation-view .pt-translation > p:last-child,
+.pt-translation-view .pt-original > p:last-child {
+  margin-bottom: 0;
+}
+
+/* Legacy translation HTML stored line breaks as direct <br> elements. */
+.pt-translation-view .pt-translation > br,
+.pt-translation-view .pt-original > br {
+  display: block;
+  content: "";
+  margin-top: 0.75em;
+}
+
 .pt-translation-view .pt-original {
   color: var(--pf-muted);
   font-size: 12px;
   white-space: pre-wrap;
 }
 
+.pt-translation-view .pt-source-visual {
+  width: 100%;
+  max-width: 100%;
+  margin: 18px auto 7px;
+  padding: 9px;
+  border: 1px solid var(--pf-hairline);
+  border-radius: var(--pf-r-md);
+  background: var(--pf-canvas);
+  text-align: center;
+}
+
+.pt-translation-view .pt-source-visual-image {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.pt-translation-view .pt-source-visual figcaption {
+  margin-top: 8px;
+  color: var(--pf-body);
+  font-size: 11.5px;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.pt-translation-view .pt-caption-translation {
+  display: block;
+}
+
+.pt-translation-view .pt-source-page {
+  margin-left: 5px;
+  color: var(--pf-muted);
+  font-size: 9.5px;
+}
+
+.pt-translation-view .pt-source-caption {
+  margin: 6px 8px 15px;
+  color: var(--pf-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.pt-translation-view .pt-equation {
+  width: 100%;
+  max-width: 100%;
+  margin: 16px auto;
+  padding: 7px 5px;
+  overflow-x: auto;
+  text-align: center;
+}
+
+.pt-translation-view .pt-equation-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 10px;
+  min-width: max-content;
+}
+
+.pt-translation-view .pt-equation-math {
+  justify-self: center;
+  font-size: 1.04em;
+}
+
+.pt-translation-view .pt-equation-number {
+  justify-self: end;
+  color: var(--pf-body);
+  font-family: Georgia, serif;
+  white-space: nowrap;
+}
+
+.pt-translation-view .pt-equation-latex {
+  margin-top: 4px;
+  color: var(--pf-muted);
+  font-size: 9.5px;
+  text-align: left;
+}
+
+.pt-translation-view .pt-equation-latex code {
+  display: block;
+  margin-top: 4px;
+  padding: 5px 6px;
+  border-radius: var(--pf-r-sm);
+  background: var(--pf-surface-soft);
+  white-space: pre-wrap;
+}
+
+.pt-translation-view .pt-math-inline {
+  display: inline-block;
+  margin: 0 0.06em;
+  vertical-align: -0.15em;
+}
+
 /* ── Meta (key/value card + raw json) ────────────────────────────────────── */
 .pt-meta-summary {
   width: 100%;
+  max-width: 100%;
   border-collapse: separate;
   border-spacing: 0;
   margin-bottom: 14px;
@@ -409,6 +559,8 @@ collapsible-section[data-pane$="paperflow-reader"][open] > [data-type="body"] > 
 }
 
 .pt-raw-json {
+  width: 100%;
+  max-width: 100%;
   margin: 0;
   max-height: 180px;
   overflow: auto;
@@ -436,7 +588,12 @@ collapsible-section[data-pane$="paperflow-reader"][open] > [data-type="body"] > 
   display: flex;
   /* flex-basis만 사용 (height와 flex 동시 지정 금지). */
   flex: 0 0 var(--paperflow-chat-height, 180px);
-  min-height: 160px;
+  /* 입력창이 커지거나 첨부 칩이 붙어도 컴포저 아래쪽이 잘려서 내려가지 않도록
+     내용이 요구하는 최소 높이를 보장한다. 부족한 높이는 위쪽 본문 pane에서
+     가져오므로 입력창은 아래가 아니라 위로 자란다.
+     min-content는 쓸 수 없다 — overflow:hidden이라 스크롤 컨테이너로 취급되어
+     0으로 계산된다. 대신 JS가 실측한 px 값을 --paperflow-chat-min으로 내려준다. */
+  min-height: var(--paperflow-chat-min, 160px);
   max-height: 72%;
   flex-direction: column;
   gap: var(--pf-xxs);
@@ -447,6 +604,27 @@ collapsible-section[data-pane$="paperflow-reader"][open] > [data-type="body"] > 
   padding: 8px 10px 10px;
   box-sizing: border-box;
   position: relative;
+}
+
+/* Divider snap states: the divider remains visible and acts as the restore
+   handle while either the content pane or the chat pane is hidden. */
+#pt-root.pt-layout-content-only #pt-chat {
+  display: none;
+}
+
+#pt-root.pt-layout-content-only #pt-content {
+  flex: 1 1 0;
+}
+
+#pt-root.pt-layout-chat-only #pt-content {
+  display: none;
+}
+
+#pt-root.pt-layout-chat-only #pt-chat {
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: none;
 }
 
 #pt-chat::after {
@@ -673,6 +851,7 @@ collapsible-section[data-pane$="paperflow-reader"][open] > [data-type="body"] > 
 
 /* ── Composer (modern assistant input) ───────────────────────────────────── */
 .pt-chat-composer {
+  position: relative;
   flex: 0 0 auto;
   flex-shrink: 0;
   display: flex;
@@ -692,10 +871,12 @@ collapsible-section[data-pane$="paperflow-reader"][open] > [data-type="body"] > 
 
 #pt-chat-input {
   width: 100%;
-  height: 42px;
+  /* 실제 높이는 JS auto-grow가 입력 줄 수에 맞춰 인라인으로 지정한다.
+     여기서는 시작 높이와 상한만 정의한다. */
   min-height: 42px;
-  max-height: 72px;
+  max-height: 132px;
   resize: none;
+  overflow-y: hidden;
   border: 0;
   background: transparent;
   color: var(--pf-ink);
@@ -707,6 +888,34 @@ collapsible-section[data-pane$="paperflow-reader"][open] > [data-type="body"] > 
 
 #pt-chat-input::placeholder {
   color: var(--pf-muted);
+}
+
+/* 추천 질문 오버레이 — textarea 첫 줄 위에 겹쳐 두고 천천히 교차시킨다.
+   pointer-events가 없으므로 클릭은 그대로 textarea로 전달된다. */
+.pt-composer-hint {
+  position: absolute;
+  top: 7px;
+  left: 9px;
+  right: 9px;
+  pointer-events: none;
+  color: var(--pf-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+
+.pt-composer-hint.pt-hint-visible {
+  opacity: 1;
+}
+
+/* 타이핑이 시작되면 페이드 없이 즉시 사라진다. (교차 회전만 천천히 진행) */
+.pt-composer-hint.pt-hint-off {
+  opacity: 0;
+  transition: none;
 }
 
 #pt-chat-input:disabled {
@@ -891,3 +1100,48 @@ collapsible-section[data-pane*="paperflow-reader"]::part(icon) {
 .pt-divider.pt-dragging::after {
   background: var(--pf-on-primary);
 }
+/* ── Rendered Gemini Markdown and LaTeX ─────────────────────────────────── */
+.pt-msg.pt-markdown { white-space: normal; }
+.pt-markdown html|p { margin: 0 0 0.72em; line-height: 1.58; }
+.pt-markdown html|p:last-child { margin-bottom: 0; }
+.pt-markdown html|h1,
+.pt-markdown html|h2,
+.pt-markdown html|h3,
+.pt-markdown html|h4,
+.pt-markdown html|h5,
+.pt-markdown html|h6 { margin: 0.95em 0 0.42em; color: var(--pf-ink); font-weight: 650; line-height: 1.3; }
+.pt-markdown html|h1:first-child,
+.pt-markdown html|h2:first-child,
+.pt-markdown html|h3:first-child { margin-top: 0; }
+.pt-markdown html|h1 { font-size: 1.28em; }
+.pt-markdown html|h2 { font-size: 1.17em; }
+.pt-markdown html|h3 { font-size: 1.08em; }
+.pt-markdown html|ul,
+.pt-markdown html|ol { margin: 0.5em 0 0.78em 1.5em; padding: 0; }
+.pt-markdown html|li { margin: 0.28em 0; line-height: 1.52; }
+.pt-markdown .pt-md-task { margin: 0 0.42em 0 -1.25em; vertical-align: -0.1em; }
+.pt-markdown html|blockquote { margin: 0.6em 0; padding: 0.35em 0 0.35em 0.85em; border-left: 3px solid var(--pf-primary); color: var(--pf-body); }
+.pt-markdown html|hr { height: 1px; margin: 0.9em 0; border: 0; background: var(--pf-hairline); }
+.pt-markdown html|a { color: var(--pf-primary); text-decoration: underline; text-underline-offset: 2px; }
+.pt-markdown html|strong { color: var(--pf-ink); font-weight: 700; }
+.pt-md-inline-code,
+.pt-md-code-block html|code,
+.pt-md-math-fallback { font-family: var(--pf-mono); }
+.pt-md-inline-code { padding: 0.08em 0.34em; border: 1px solid var(--pf-hairline-soft); border-radius: 5px; background: var(--pf-surface-strong); font-size: 0.9em; }
+.pt-md-code-block { max-width: 100%; margin: 0.65em 0 0.85em; padding: 0.75em 0.9em; overflow-x: auto; border: 1px solid var(--pf-hairline); border-radius: var(--pf-r-sm); background: #f4f5f7; color: var(--pf-ink); font-size: 0.9em; line-height: 1.5; white-space: pre; }
+.pt-md-table-wrap { max-width: 100%; margin: 0.65em 0 0.9em; overflow-x: auto; border: 1px solid var(--pf-hairline); border-radius: var(--pf-r-sm); }
+.pt-md-table { width: 100%; min-width: max-content; border-collapse: collapse; background: var(--pf-canvas); color: var(--pf-ink); font-size: 0.94em; }
+.pt-md-table html|th,
+.pt-md-table html|td { padding: 0.52em 0.68em; border-right: 1px solid var(--pf-hairline-soft); border-bottom: 1px solid var(--pf-hairline-soft); text-align: left; vertical-align: top; }
+.pt-md-table html|th:last-child,
+.pt-md-table html|td:last-child { border-right: 0; }
+.pt-md-table html|tbody html|tr:last-child html|td { border-bottom: 0; }
+.pt-md-table html|th { background: var(--pf-surface-strong); font-weight: 650; }
+.pt-md-table html|tbody html|tr:nth-child(even) { background: var(--pf-surface-soft); }
+.pt-md-math-inline { display: inline-flex; max-width: 100%; align-items: center; margin: 0 0.08em; vertical-align: -0.2em; }
+.pt-md-math-block { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; max-width: 100%; align-items: center; column-gap: 12px; margin: 0.75em 0 0.95em; padding: 0.48em 0.25em; overflow-x: auto; color: var(--pf-ink); text-align: center; }
+.pt-md-math-block *|math,
+.pt-md-math-inline *|math { color: var(--pf-ink); font-size: 1.08em; }
+.pt-md-math-block *|math { justify-self: center; min-width: max-content; }
+.pt-md-equation-label { justify-self: end; color: var(--pf-body); font-family: Georgia, serif; white-space: nowrap; }
+.pt-md-math-fallback { color: var(--pf-ink); white-space: pre-wrap; }

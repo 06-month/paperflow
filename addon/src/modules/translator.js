@@ -7,7 +7,10 @@ var PTTranslator = {
   // ── 단일 chunk 번역 ────────────────────────────────────────────────────────
   // isLastChunk: true면 섹션 요약도 함께 생성
   async translateChunk(job, apiKey, isLastChunk = false) {
-    const prompt = this._buildPrompt(job, isLastChunk);
+    const isLayoutJob = Array.isArray(job.blocks) && job.blocks.length > 0;
+    const prompt = isLayoutJob
+      ? this._buildLayoutPrompt(job, isLastChunk)
+      : this._buildPrompt(job, isLastChunk);
 
     const reqBody = {
       contents: [{ parts: [{ text: prompt }] }],
@@ -15,6 +18,7 @@ var PTTranslator = {
         temperature: 0.2,
         maxOutputTokens: this.MAX_OUTPUT_TOKENS,
         responseMimeType: "application/json",
+        ...(isLayoutJob ? { responseSchema: this._layoutTranslationSchema() } : {}),
       },
     };
 
@@ -51,7 +55,9 @@ var PTTranslator = {
     const raw = (candidate?.content?.parts || []).map(p => p.text || "").join("");
 
     this._assertUsableResponse(raw, finishReason);
-    return this._parseResponse(raw, isLastChunk);
+    return isLayoutJob
+      ? this._parseLayoutResponse(raw, job, isLastChunk)
+      : this._parseResponse(raw, isLastChunk);
   },
 
   // ── 응답 유효성 검사 ──────────────────────────────────────────────────────
@@ -96,8 +102,11 @@ var PTTranslator = {
 
 규칙:
 - 원문의 문체와 구조를 최대한 유지하세요 (직역 우선)
+- 원문의 문단 구분을 반드시 유지하고, "translation" JSON 문자열에서 문단 사이는 \\n\\n으로 구분하세요
 - 전문 용어는 영어 원문을 괄호 병기하세요 (예: 자기 주의(self-attention))
 - 수식, 변수명, 모델명, 데이터셋명은 번역하지 마세요
+- 모든 수식은 유효한 LaTeX로 정리하세요. 문장 안 수식은 $...$, 독립되거나 (1), (2)처럼 번호가 있는 표시 수식은 반드시 $$...$$로 감싸세요
+- LaTeX 명령의 역슬래시는 JSON 문자열 규칙에 맞게 이스케이프하세요
 - 반드시 JSON만 반환하세요 (마크다운 코드블록, 설명 없이)
 
 섹션: ${job.heading}${chunkLabel}
@@ -109,6 +118,107 @@ ${job.text}${summaryContext}
 {
   "translation": "번역된 본문 전체"${summaryInstruction.replace("- ", ",\n  ")}
 }`;
+  },
+
+  _buildLayoutPrompt(job, isLastChunk) {
+    const summaryInstruction = isLastChunk
+      ? `Write a Korean summary of the whole section in at most ${PTPrefs.getSummaryLines()} lines.`
+      : `Return an empty string for summary because this is not the last chunk.`;
+    const summaryContext = isLastChunk && job.summaryContext
+      ? `\n\nSection-wide context for summary only; do not add it to translations:\n${job.summaryContext}`
+      : "";
+    const inputBlocks = job.blocks.map(block => ({ id: block.id, text: block.text }));
+
+    return `You are a professional Korean translator for ML/CV academic papers.
+Translate each source block into Korean independently while preserving its exact id.
+
+Rules:
+- Preserve the academic tone and meaning closely.
+- Keep paragraph boundaries inside each block.
+- Put the English source term in parentheses for specialized terminology when useful.
+- Do not translate equations, variable names, model names, or dataset names.
+- Preserve every [[PTMATH_...]] token byte-for-byte in the same semantic position. Never translate, remove, duplicate, or alter these tokens; PaperFlow replaces them with rendered LaTeX after translation.
+- If any mathematical expression is not represented by a PTMATH token, normalize it to valid LaTeX. Use $...$ for inline math and $$...$$ for standalone or numbered equations such as (1), (2), etc.
+- Return exactly one translation for every input id and no additional ids.
+- Do not merge blocks, split ids, add commentary, or use Markdown code fences.
+- ${summaryInstruction}
+
+Section: ${job.heading}
+Input blocks:
+${JSON.stringify(inputBlocks)}${summaryContext}`;
+  },
+
+  _layoutTranslationSchema() {
+    return {
+      type: "OBJECT",
+      properties: {
+        translations: {
+          type: "ARRAY",
+          items: {
+            type: "OBJECT",
+            properties: {
+              id: { type: "STRING" },
+              translation: { type: "STRING" },
+            },
+            required: ["id", "translation"],
+          },
+        },
+        summary: { type: "STRING" },
+      },
+      required: ["translations", "summary"],
+    };
+  },
+
+  _parseLayoutResponse(raw, job, isLastChunk) {
+    const cleaned = raw
+      .replace(/^```json\s*/i, "")
+      .replace(/^```\s*/i, "")
+      .replace(/```\s*$/i, "")
+      .trim();
+    let parsed;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch (error) {
+      throw new PTError(`구조화 번역 JSON 파싱 실패: ${error.message}`, "PARSE_FAILED");
+    }
+
+    const expected = new Set(job.blocks.map(block => block.id));
+    const blockTranslations = {};
+    for (const entry of Array.isArray(parsed.translations) ? parsed.translations : []) {
+      const id = String(entry?.id || "");
+      const translation = String(entry?.translation || "").trim();
+      if (!expected.has(id) || !translation || blockTranslations[id]) continue;
+      blockTranslations[id] = translation;
+    }
+
+    const missing = job.blocks.map(block => block.id).filter(id => !blockTranslations[id]);
+    if (missing.length) {
+      throw new PTError(
+        `구조화 번역 응답에서 ${missing.length}개 block이 누락되었습니다: ${missing.slice(0, 4).join(", ")}`,
+        "MISSING_BLOCK_TRANSLATION"
+      );
+    }
+
+    for (const block of job.blocks) {
+      const expectedTokens = String(block.text || "").match(/\[\[PTMATH_[A-Za-z0-9_]+\]\]/g) || [];
+      const translatedTokens = String(blockTranslations[block.id] || "").match(/\[\[PTMATH_[A-Za-z0-9_]+\]\]/g) || [];
+      const expectedCounts = expectedTokens.reduce((map, token) => map.set(token, (map.get(token) || 0) + 1), new Map());
+      const translatedCounts = translatedTokens.reduce((map, token) => map.set(token, (map.get(token) || 0) + 1), new Map());
+      const mismatch = expectedCounts.size !== translatedCounts.size
+        || Array.from(expectedCounts).some(([token, count]) => translatedCounts.get(token) !== count);
+      if (mismatch) {
+        throw new PTError(
+          `구조화 번역이 수식 token을 변경했습니다: ${block.id}`,
+          "MATH_TOKEN_MISMATCH"
+        );
+      }
+    }
+
+    return {
+      blockTranslations,
+      translation: job.blocks.map(block => blockTranslations[block.id]).join("\n\n"),
+      summary: isLastChunk ? String(parsed.summary || "").trim() : "",
+    };
   },
 
   // ── 응답 파싱 ─────────────────────────────────────────────────────────────

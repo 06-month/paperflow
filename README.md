@@ -6,7 +6,7 @@
   Summarize, translate, inspect metadata, and ask paper-specific questions without leaving Zotero.
 </p>
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.4.0-blue">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.5.0-blue">
   <img alt="Status" src="https://img.shields.io/badge/status-experimental-orange">
   <img alt="Zotero" src="https://img.shields.io/badge/Zotero-7%2B-red">
   <img alt="AI" src="https://img.shields.io/badge/AI-Gemini-7c3aed">
@@ -43,11 +43,17 @@ Read → Summarize → Translate → Inspect → Ask
 | Chunk-based processing | Processes long papers in smaller chunks | Implemented |
 | Partial save & resume | Save progress at every section boundary; resume interrupted translations by text hash | Implemented |
 | Artifact reuse | Reloads existing notes, translations, and metadata | Implemented |
+| Layout-aware translation | Uses page images plus native PDF text coordinates to preserve paragraph and two-column reading order | Implemented with text fallback |
+| Original visual regions | Reconstructs complete Figure/Table regions from the rendered source page and places translated captions directly below them | Implemented (Gemini layout analysis) |
+| LaTeX mathematics | Converts inline/display equations to LaTeX, renders them with native MathML, and preserves numbered equations as `$$...$$` source | Implemented |
+| Local PDF split cache | Saves page renders, page text, Figure/Table images, Markdown, and a manifest under Zotero data's `PaperFlow_PdfSplit` folder | Implemented |
+| Parallel Gemini processing | Runs page analysis and translation chunks concurrently with configurable concurrency and race-safe RPM/RPD limiting | Implemented |
 | Selection-based chat attachments | Drag text in PDF, Summary, or Translation view — auto-attached to chat with source label | Implemented |
 | File attachment (Finder) | `+` button opens OS file picker; attach images, PDFs, or text files | Implemented |
 | Clipboard image paste | ⌘V pastes clipboard images as thumbnails; sent inline in user bubble | Implemented |
 | Gemini multimodal chat | Images and PDFs sent to Gemini as `inline_data` | Implemented |
 | Multi-turn chat history | Previous turns kept for follow-up questions | Implemented |
+| Rendered AI answers | Markdown tables/lists/code and inline/display LaTeX render in both sidebar and standalone panel chats | Implemented |
 | Rate limiter (persistent) | Daily quota tracked across restarts; aligned to Google's Pacific-midnight reset | Implemented |
 | API key security | Key sent via `x-goog-api-key` header, not URL | Implemented |
 | Source-aligned translation | Map translations back to original PDF spans | Planned |
@@ -60,7 +66,7 @@ Read → Summarize → Translate → Inspect → Ask
 Download the latest release XPI from GitHub Releases:
 
 ```
-https://github.com/06-month/paperflow/releases/tag/v0.4.0
+https://github.com/06-month/paperflow/releases/tag/v0.5.0
 ```
 
 **Install in Zotero:**
@@ -91,6 +97,8 @@ https://github.com/06-month/paperflow/releases/tag/v0.4.0
 3. Switch between **Summary**, **Translation**, and **Meta** views.
 4. Ask questions in the chat panel at the bottom.
 
+The same attachment, selection, paste, multi-turn, Markdown, and LaTeX chat features are available from **Tools → Open PaperFlow Panel**.
+
 ### Attach context to chat
 
 | Method | How |
@@ -110,17 +118,17 @@ Selection cards show the source as a bold title and the selected text truncated 
 ```
 Zotero item / PDF
       ↓
-PDF text extraction (PDFWorker)
+PDF.js page render + native text coordinates
       ↓
-Text cleaning
+Gemini page layout JSON (heading / paragraph / figure / table / caption / LaTeX math)
       ↓
-Section splitting
+Stable block IDs, reading order, caption links, and math tokens
       ↓
-Chunking (≤1500 tokens/chunk)
+PaperFlow_PdfSplit cache + translatable blocks → chunking (≤1500 tokens/chunk)
       ↓
-Gemini translation (gemini-3.1-flash-lite)
+Parallel Gemini block translation (gemini-3.1-flash-lite)
       ↓
-Partial saves at section boundaries
+Translated text + original visuals/captions + rendered equations are interleaved
       ↓
 pt-meta.json (source of truth)  →  translated.ko.html  →  Zotero note
       ↓
@@ -136,6 +144,19 @@ Paper-context-aware chat with attachment support
 | `pt-meta.json` | Structured JSON: chunk translations, summaries, text hashes, completion state |
 | `translated.ko.html` | Display HTML derived from meta JSON |
 | `[PaperFlow] note` | Zotero note with formatted summary output |
+
+**Local split output per paper:**
+
+```text
+<Zotero data>/PaperFlow_PdfSplit/<paper>-<attachment-key>/
+├─ document.md
+├─ manifest.json
+├─ text/page-001.txt
+├─ page-renders/page-001.png
+└─ extracted-images/page-001-figure-001.png
+```
+
+`document.md` preserves inline formulas as `$...$` and standalone/numbered formulas as `$$...$$`. The translation UI renders the corresponding sanitized MathML locally without a CDN.
 
 ---
 
@@ -180,6 +201,8 @@ paperflow/
 │     │  ├─ chunker.js
 │     │  ├─ cleaner.js
 │     │  ├─ extractor.js
+│     │  ├─ layoutAnalyzer.js  ← page render, text coordinates, Gemini layout JSON, source crops
+│     │  ├─ pdfSplitter.js     ← PaperFlow_PdfSplit page/text/visual/manifest writer
 │     │  └─ itemResolver.js
 │     └─ utils/
 │        ├─ constants.js       ← VERSION, MODEL_NAME, geminiEndpoint()
@@ -222,6 +245,9 @@ Compare multiple papers by contribution, method, dataset, and limitation. Export
 - Gemini API access is required for translation and chat.
 - AI output should be reviewed critically — translations and summaries may contain errors.
 - Very long papers may hit model token limits, rate limits, or API errors.
+- Layout-aware translation sends rendered PDF pages and embedded text to Gemini. It can be disabled in PaperFlow preferences; failures automatically use the existing text-only pipeline.
+- Figure/Table boundaries are model-produced and expanded conservatively around the detected object while excluding linked captions. The original PDF remains unchanged.
+- Local split outputs are regenerated under the Zotero data directory; existing `document.md` files are backed up in a per-paper `.backup` directory.
 - Source-aligned translation, Zotero annotation mapping, and multimodal understanding are roadmap items, not fully implemented.
 
 ---

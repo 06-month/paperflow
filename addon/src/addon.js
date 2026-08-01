@@ -199,26 +199,76 @@ class PaperTranslatorAddon {
     const startedAt = new Date().toISOString();
 
     try {
-      // Phase 3: 텍스트 추출
-      progressWin.update("PDF 텍스트 추출 중...", 0);
-      const rawText = await PTExtractor.extract(pdfAttachment);
-      assertNotCancelled();
+      let layout = null;
+      let layoutAnalysis = {
+        status: PTPrefs.isLayoutAwareTranslation() ? "running" : "disabled",
+        mode: null,
+        error: null,
+      };
+      let sections = null;
+      let jobs = null;
 
-      // Phase 4: 정제
-      progressWin.update("텍스트 정제 중...", 5);
-      const cleanText = PTCleaner.clean(rawText, {
-        skipReferences: PTPrefs.isSkipReferences(),
-      });
-      assertNotCancelled();
+      // Phase 3A: page-aware layout extraction. It is deliberately isolated
+      // from the text fallback so one malformed page never blocks translation.
+      if (PTPrefs.isLayoutAwareTranslation()) {
+        progressWin.update("PDF 페이지 구조 분석 준비 중...", 0);
+        try {
+          layout = await PTLayoutAnalyzer.analyze(pdfAttachment, apiKey, {
+            skipReferences: PTPrefs.isSkipReferences(),
+            isCancelled: () => progressWin.isCancelled(),
+            onProgress: (page, total, stage) => {
+              const ratio = Math.max(0, Math.min(1, (page - (stage === "render" ? 1 : 0)) / Math.max(total, 1)));
+              const pct = Math.floor(ratio * 18);
+              const label = stage === "render" ? "페이지 렌더링" : "레이아웃 분석";
+              progressWin.update(`${label} 중... ${page}/${total}`, pct);
+            },
+          });
+          assertNotCancelled();
+          sections = PTLayoutAnalyzer.toSections(layout, "본문");
+          jobs = PTChunker.buildLayoutJobs(sections, layout);
+          if (!sections.length || !jobs.length) {
+            throw new PTExtractionError("구조화된 번역 블록을 만들지 못했습니다.");
+          }
+          layoutAnalysis = {
+            status: "completed",
+            mode: layout.mode,
+            error: null,
+          };
+        } catch (layoutError) {
+          if (this._isCancelError(layoutError)) throw layoutError;
+          PTLogger.warn(`레이아웃 분석 실패 — 기존 텍스트 번역으로 전환: ${this._errorDetail(layoutError)}`);
+          layout = null;
+          sections = null;
+          jobs = null;
+          layoutAnalysis = {
+            status: "fallback",
+            mode: null,
+            error: this._shortErrorMessage(layoutError),
+          };
+          progressWin.update("레이아웃 분석 실패 — 텍스트 방식으로 전환", 3);
+        }
+      }
 
-      // Phase 5: 섹션 트리
-      progressWin.update("섹션 분석 중...", 10);
-      const sections = PTSectionizer.sectionize(cleanText);
-      assertNotCancelled();
+      // Phase 3B~6: existing text-only path, retained as a compatibility and
+      // reliability fallback for unsupported or failed PDF layouts.
+      if (!jobs) {
+        progressWin.update("PDF 텍스트 추출 중...", 4);
+        const rawText = await PTExtractor.extract(pdfAttachment);
+        assertNotCancelled();
 
-      // Phase 6: chunking
-      progressWin.update("청킹 중...", 15);
-      const jobs = PTChunker.buildJobs(sections);
+        progressWin.update("텍스트 정제 중...", 9);
+        const cleanText = PTCleaner.clean(rawText, {
+          skipReferences: PTPrefs.isSkipReferences(),
+        });
+        assertNotCancelled();
+
+        progressWin.update("섹션 분석 중...", 13);
+        sections = PTSectionizer.sectionize(cleanText);
+        assertNotCancelled();
+
+        progressWin.update("청킹 중...", 17);
+        jobs = PTChunker.buildJobs(sections);
+      }
       PTLogger.info(`총 ${jobs.length}개 chunk 생성`);
 
       // 재개: 기존 완료 chunk를 복원 (chunkId + 텍스트 해시 일치 시)
@@ -240,6 +290,8 @@ class PaperTranslatorAddon {
             return PTStorage.save(targetItem, jobsArr, {
               title,
               sections,
+              layout,
+              layoutAnalysis,
               startedAt,
               modelName: PTConstants.MODEL_NAME,
             });
@@ -384,7 +436,16 @@ class PaperTranslatorAddon {
       panelURL,
       `paper-translator-panel-${itemID}`,
       "chrome,resizable,centerscreen,width=900,height=700",
-      { parentItemID: itemID, itemID, title, rootURI: this.rootURI, Zotero }
+      {
+        parentItemID: itemID,
+        itemID,
+        title,
+        rootURI: this.rootURI,
+        Zotero,
+        readerSelectionBridge: typeof PaperFlowReaderSidebar !== "undefined"
+          ? PaperFlowReaderSidebar
+          : null,
+      }
     );
     if (panelWin) {
       panelWin.addEventListener("load", () => {

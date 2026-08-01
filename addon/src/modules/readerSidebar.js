@@ -135,6 +135,9 @@ var PaperFlowReaderSidebar = {
           this._bundle = null;
           this._activeTab = "summary";
           this._chatSending = false;
+          this._composing = false; // IME 조합 진행 여부
+          this._hintTimer = null;  // 추천 질문 회전 타이머
+          this._hintIndex = 0;
           this._chatHistory = []; // [{ role, text }] — 멀티턴 대화용
           // [{ id, kind, source, label, text?, mimeType?, data?, sizeBytes?, truncated }]
           // kind: "selection" | "file" (텍스트) | "image" | "media-pdf" (base64)
@@ -147,6 +150,7 @@ var PaperFlowReaderSidebar = {
           this._lastViewportHeight = 0;
           this._lastHostTop = null;
           this._lastSectionOpenHeight = 0;
+          this._layoutMode = "split";
         }
 
         set item(val) {
@@ -165,6 +169,8 @@ var PaperFlowReaderSidebar = {
             this._wireHostResize();
             this._applyLayoutSizing();
             this._updateItemUI();
+            // 분리됐다 다시 붙은 경우 회전 타이머를 되살린다 (재진입 안전).
+            this._startComposerHint();
             return;
           }
           this._render();
@@ -196,6 +202,7 @@ var PaperFlowReaderSidebar = {
               this._onHostResize = null;
             }
           } catch (_) { /* noop */ }
+          this._stopComposerHint();
         }
 
         // 드래그가 해제되면(다른 곳 클릭 등) 해당 드래그 첨부도 자동 제거
@@ -392,11 +399,15 @@ var PaperFlowReaderSidebar = {
 
         _clampChatHeight() {
           try {
+            if (this._layoutMode !== "split") return;
             const root = this.querySelector("#pt-root");
             if (!root) return;
             const hostHeight = this.getBoundingClientRect().height || 700;
-            const minChat = 160;
-            const maxChat = this._getMaxChatHeight(hostHeight, minChat);
+            // 컴포저/첨부가 요구하는 높이를 최소값으로 삼는다. 늘어난 만큼은
+            // 위쪽 본문 pane에서 가져오므로 아래쪽 박스 경계는 그대로다.
+            const hardCap = Math.max(160, Math.floor(hostHeight - 40));
+            const minChat = Math.min(Math.max(160, this._minChatHeight()), hardCap);
+            const maxChat = Math.max(minChat, this._getMaxChatHeight(hostHeight, minChat));
             const defaultChat = Math.floor(hostHeight * 0.24);
             let saved = null;
             try {
@@ -404,6 +415,8 @@ var PaperFlowReaderSidebar = {
             } catch (_) { /* noop */ }
             const raw = Number.isInteger(saved) ? saved : defaultChat;
             const chatHeight = Math.max(minChat, Math.min(raw, maxChat));
+            // height와 min-height를 함께 내려 flex 재분배에 기대지 않도록 한다.
+            root.style.setProperty("--paperflow-chat-min", `${minChat}px`);
             if (chatHeight !== this._lastChatHeight) {
               root.style.setProperty("--paperflow-chat-height", `${chatHeight}px`);
               this._lastChatHeight = chatHeight;
@@ -531,8 +544,17 @@ var PaperFlowReaderSidebar = {
 
           const chatInput = doc.createElementNS(xhtmlNS, "textarea");
           chatInput.setAttribute("id", "pt-chat-input");
+          chatInput.setAttribute("rows", "1");
           chatInput.setAttribute("placeholder", "무엇이든 질문하세요.");
+          chatInput.setAttribute("aria-label", "무엇이든 질문하세요.");
           this._chatInput = chatInput;
+
+          // 추천 질문이 천천히 교차되는 오버레이 (textarea 첫 줄 위에 겹침)
+          const composerHint = doc.createElementNS(xhtmlNS, "div");
+          composerHint.setAttribute("id", "pt-composer-hint");
+          composerHint.setAttribute("class", "pt-composer-hint");
+          composerHint.setAttribute("aria-hidden", "true");
+          this._composerHint = composerHint;
 
           const composerActions = doc.createElementNS(xhtmlNS, "div");
           composerActions.setAttribute("class", "pt-composer-actions");
@@ -563,6 +585,7 @@ var PaperFlowReaderSidebar = {
           composerActions.appendChild(chatSend);
 
           chatComposer.appendChild(chatInput);
+          chatComposer.appendChild(composerHint);
           chatComposer.appendChild(composerActions);
 
           chatSection.appendChild(chatLog);
@@ -611,13 +634,142 @@ var PaperFlowReaderSidebar = {
               this._ask();
             }
           });
+          // 조합 상태를 직접 추적한다. 전송 버튼 클릭처럼 keydown을 거치지 않는
+          // 경로에서도 조합을 확정한 뒤 값을 읽어야 잔여 글자가 남지 않는다.
+          chatInput.addEventListener("compositionstart", () => { this._composing = true; });
+          chatInput.addEventListener("compositionend", () => { this._composing = false; });
+          chatInput.addEventListener("input", () => {
+            this._autoGrowInput();
+            this._syncComposerHint();
+          });
+          this._autoGrowInput();
+          this._startComposerHint();
+        }
+
+        // 입력 줄 수에 맞춰 textarea를 키운다. 컴포저는 chat pane 아래쪽에
+        // 고정돼 있으므로 높이가 늘면 윗변이 위로 올라간다.
+        _autoGrowInput() {
+          const input = this._chatInput;
+          const win = this.ownerDocument && this.ownerDocument.defaultView;
+          if (!input || !win) return;
+          const limit = parseFloat(win.getComputedStyle(input).maxHeight);
+          const max = Number.isFinite(limit) ? limit : 132;
+          input.style.height = "auto";
+          const next = Math.min(input.scrollHeight, max);
+          input.style.height = `${next}px`;
+          input.style.overflowY = input.scrollHeight > max ? "auto" : "hidden";
+          this._clampChatHeight();
+        }
+
+        // 첨부 칩과 컴포저가 실제로 요구하는 chat pane 높이. divider를 아무리
+        // 내려도 이 값 밑으로는 내려가지 않아야 입력창 아래쪽이 잘리지 않는다.
+        _minChatHeight() {
+          const win = this.ownerDocument && this.ownerDocument.defaultView;
+          const chat = this.querySelector("#pt-chat");
+          const composer = this._chatComposer;
+          // pane이 숨겨져 있으면(content-only) 실측이 0이라 의미가 없다.
+          if (!win || !chat || !composer || !composer.offsetHeight) return 0;
+          const px = value => {
+            const n = parseFloat(value);
+            return Number.isFinite(n) ? n : 0;
+          };
+          const styles = win.getComputedStyle(chat);
+          const frame = px(styles.paddingTop) + px(styles.paddingBottom)
+            + px(styles.borderTopWidth) + px(styles.borderBottomWidth);
+          const gap = px(styles.rowGap);
+          const attachments = this._chatAttachmentsEl;
+          const attachHeight = attachments && attachments.offsetHeight
+            ? attachments.offsetHeight + gap
+            : 0;
+          const LOG_FLOOR = 28; // 답변 한 줄은 항상 남겨 둔다
+          return Math.ceil(frame + gap + LOG_FLOOR + attachHeight + composer.offsetHeight);
+        }
+
+        // 열려 있는 IME 조합을 확정한다. blur가 조합을 즉시 커밋하므로 이후에
+        // 읽는 value에는 마지막 음절까지 포함되고, 되돌아오는 잔여 글자도 없다.
+        _commitComposition() {
+          if (!this._composing || !this._chatInput) return;
+          const refocus = this.ownerDocument.activeElement === this._chatInput;
+          this._chatInput.blur();
+          this._composing = false;
+          if (refocus) this._chatInput.focus();
+        }
+
+        // 전송 후 입력창 초기화. IME 조합이 열린 채로 비우면 조합 중이던 음절이
+        // 뒤늦게 커밋되어 한 글자가 남으므로 조합 종료 시 한 번 더 비운다.
+        _clearComposer() {
+          const input = this._chatInput;
+          if (!input) return;
+          const clear = () => {
+            input.value = "";
+            this._autoGrowInput();
+            this._syncComposerHint();
+          };
+          clear();
+          if (this._composing) {
+            input.addEventListener("compositionend", () => clear(), { once: true });
+          }
+        }
+
+        _composerSuggestions() {
+          const list = typeof PTConstants !== "undefined" ? PTConstants.CHAT_SUGGESTIONS : null;
+          return Array.isArray(list) && list.length ? list : [];
+        }
+
+        // 입력 중이거나 채팅이 비활성화된 동안에는 추천 문구를 감춘다.
+        // 타이핑이 시작되면 페이드 없이 즉시 사라져야 하므로 별도 클래스를 쓴다.
+        _syncComposerHint() {
+          const hint = this._composerHint;
+          const input = this._chatInput;
+          if (!hint || !input) return;
+          hint.classList.toggle("pt-hint-off", !!input.value);
+          const show = this._hintTimer !== null && !input.disabled && !input.value;
+          hint.classList.toggle("pt-hint-visible", show && !!hint.textContent);
+        }
+
+        _startComposerHint() {
+          const hint = this._composerHint;
+          const input = this._chatInput;
+          const win = this.ownerDocument && this.ownerDocument.defaultView;
+          const suggestions = this._composerSuggestions();
+          if (!hint || !input || !win || !suggestions.length || this._hintTimer !== null) return;
+
+          // 회전 문구가 실제로 동작할 때만 기본 placeholder를 넘겨받는다.
+          input.placeholder = "";
+          this._hintIndex = Math.floor(Math.random() * suggestions.length);
+          hint.textContent = suggestions[this._hintIndex];
+
+          const VISIBLE_MS = 4500;
+          const FADE_MS = 500;
+          this._hintTimer = win.setInterval(() => {
+            const list = this._composerSuggestions();
+            if (!list.length) return;
+            hint.classList.remove("pt-hint-visible");
+            win.setTimeout(() => {
+              this._hintIndex = (this._hintIndex + 1) % list.length;
+              hint.textContent = list[this._hintIndex];
+              this._syncComposerHint();
+            }, FADE_MS);
+          }, VISIBLE_MS + FADE_MS);
+          this._syncComposerHint();
+        }
+
+        _stopComposerHint() {
+          if (this._hintTimer === null) return;
+          try {
+            const win = this.ownerDocument && this.ownerDocument.defaultView;
+            if (win) win.clearInterval(this._hintTimer);
+          } catch (_) { /* noop */ }
+          this._hintTimer = null;
+          if (this._composerHint) this._composerHint.classList.remove("pt-hint-visible");
         }
 
         _wireResize() {
           const divider = this.querySelector("#pt-divider");
           const chat = this.querySelector("#pt-chat");
           const rootEl = this.querySelector("#pt-root");
-          if (!divider || !chat || !rootEl) return;
+          const workspace = this.querySelector("#pt-main");
+          if (!divider || !chat || !rootEl || !workspace) return;
 
           let isDragging = false;
           let isHostDragging = false;
@@ -625,6 +777,12 @@ var PaperFlowReaderSidebar = {
           let startHeight = 0;
           let startHostY = 0;
           let startHostHeight = 0;
+          // 드래그 한 번 동안 고정되는 바닥값. content-only로 스냅되면 chat pane이
+          // display:none이 되어 실측값이 0으로 떨어지는데, 그 값으로 임계점을 다시
+          // 계산하면 같은 마우스 위치가 split 조건을 만족해 무한 토글(깜빡임)이 된다.
+          let dragFloor = 0;
+          const snapOvershoot = 56;
+          const chatFloor = () => Math.max(160, this._minChatHeight());
 
           const isNearChatBottom = (e) => {
             const rect = chat.getBoundingClientRect();
@@ -635,8 +793,10 @@ var PaperFlowReaderSidebar = {
             isDragging = true;
             startY = e.clientY;
             startHeight = chat.offsetHeight;
+            dragFloor = chatFloor();
             this.ownerDocument.body.style.userSelect = "none";
             divider.classList.add("pt-dragging");
+            e.preventDefault();
           };
 
           const onMouseMove = (e) => {
@@ -649,12 +809,25 @@ var PaperFlowReaderSidebar = {
             const dy = startY - e.clientY;
             let newHeight = startHeight + dy;
 
-            const parentHeight = rootEl.offsetHeight || 520;
-            const minHeight = 160;
-            const maxHeight = this._getMaxChatHeight(parentHeight, minHeight);
+            const parentHeight = workspace.offsetHeight || rootEl.offsetHeight || 520;
+            const minHeight = dragFloor || chatFloor();
+            const maxHeight = Math.max(minHeight, this._getMaxChatHeight(parentHeight, minHeight));
+
+            // 최소/최대 크기를 56px 이상 넘겨 끌면 한쪽 pane으로 스냅한다.
+            if (newHeight <= minHeight - snapOvershoot) {
+              this._setLayoutMode("content-only");
+              return;
+            }
+            if (newHeight >= maxHeight + snapOvershoot) {
+              this._setLayoutMode("chat-only");
+              return;
+            }
+
+            this._setLayoutMode("split");
 
             newHeight = Math.max(minHeight, Math.min(newHeight, maxHeight));
             rootEl.style.setProperty('--paperflow-chat-height', newHeight + "px");
+            this._lastChatHeight = newHeight;
 
             try {
               localStorage.setItem("paperflow-chat-height-v2", String(newHeight));
@@ -669,11 +842,13 @@ var PaperFlowReaderSidebar = {
             }
             if (!isDragging) return;
             isDragging = false;
+            dragFloor = 0;
             this.ownerDocument.body.style.userSelect = "";
             divider.classList.remove("pt-dragging");
           };
 
           divider.addEventListener("mousedown", onMouseDown);
+          divider.setAttribute("title", "끝까지 드래그하면 본문 또는 채팅만 표시합니다.");
           chat.addEventListener("mousemove", (e) => {
             if (isDragging || isHostDragging) return;
             chat.classList.toggle("pt-host-resize-hover", isNearChatBottom(e));
@@ -697,21 +872,22 @@ var PaperFlowReaderSidebar = {
           // Restore saved height
           try {
             const savedHeight = localStorage.getItem("paperflow-chat-height-v2");
-            if (savedHeight) {
-              const h = parseInt(savedHeight, 10);
-              if (Number.isInteger(h) && h >= 160) {
-                const parentHeight = rootEl.offsetHeight || 520;
-                const clamped = Math.max(160, Math.min(h, this._getMaxChatHeight(parentHeight, 160)));
-                rootEl.style.setProperty('--paperflow-chat-height', clamped + "px");
-              } else {
-                this._clampChatHeight();
-              }
+            const h = savedHeight ? parseInt(savedHeight, 10) : NaN;
+            if (Number.isInteger(h) && h >= 160) {
+              const parentHeight = workspace.offsetHeight || rootEl.offsetHeight || 520;
+              const floor = chatFloor();
+              const max = Math.max(floor, this._getMaxChatHeight(parentHeight, floor));
+              const clamped = Math.max(floor, Math.min(h, max));
+              rootEl.style.setProperty('--paperflow-chat-height', clamped + "px");
+              this._lastChatHeight = clamped;
             } else {
               this._clampChatHeight();
             }
           } catch (_) {
             this._clampChatHeight();
           }
+
+          this._restoreLayoutMode();
         }
 
         _getMaxChatHeight(containerHeight, minHeight = 160) {
@@ -720,6 +896,31 @@ var PaperFlowReaderSidebar = {
           const ratioLimit = Math.floor(height * 0.72);
           const reserveLimit = Math.floor(height - reservedContentHeight);
           return Math.max(minHeight, Math.min(ratioLimit, reserveLimit));
+        }
+
+        _setLayoutMode(mode, persist = true) {
+          const normalized = ["split", "content-only", "chat-only"].includes(mode)
+            ? mode
+            : "split";
+          const root = this.querySelector("#pt-root");
+          if (!root) return;
+
+          const changed = this._layoutMode !== normalized;
+          this._layoutMode = normalized;
+          root.classList.toggle("pt-layout-content-only", normalized === "content-only");
+          root.classList.toggle("pt-layout-chat-only", normalized === "chat-only");
+
+          if (persist && changed) {
+            try { localStorage.setItem("paperflow-reader-layout-mode-v1", normalized); }
+            catch (_) { /* noop */ }
+          }
+        }
+
+        _restoreLayoutMode() {
+          let mode = "split";
+          try { mode = localStorage.getItem("paperflow-reader-layout-mode-v1") || "split"; }
+          catch (_) { /* noop */ }
+          this._setLayoutMode(mode, false);
         }
 
         _setActiveTabUI(tabId) {
@@ -839,6 +1040,7 @@ var PaperFlowReaderSidebar = {
           box.textContent = "";
           if (!this._pendingAttachments.length) {
             box.classList.remove("pt-has-attachments");
+            this._clampChatHeight();
             return;
           }
           box.classList.add("pt-has-attachments");
@@ -888,6 +1090,8 @@ var PaperFlowReaderSidebar = {
 
             box.appendChild(chip);
           }
+          // 칩이 차지한 만큼 chat pane을 위로 넓혀 컴포저가 잘리지 않게 한다.
+          this._clampChatHeight();
         }
 
         // ── + 버튼: OS 파일 선택창(Finder)으로 파일 첨부 ─────────────────────
@@ -1353,6 +1557,7 @@ var PaperFlowReaderSidebar = {
                 this._chatInput.disabled = false;
                 this._chatSend.disabled = false;
                 if (this._chatAttach) this._chatAttach.disabled = false;
+                this._syncComposerHint();
                 this._chatLog.textContent = "";
 
                 this._renderActiveTabContent();
@@ -1388,6 +1593,7 @@ var PaperFlowReaderSidebar = {
           this._chatInput.disabled = true;
           this._chatSend.disabled = true;
           if (this._chatAttach) this._chatAttach.disabled = true;
+          this._syncComposerHint();
           this._chatLog.textContent = "";
           this._appendBubble("assistant", message || "채팅을 사용할 수 없습니다.");
         }
@@ -1445,6 +1651,11 @@ var PaperFlowReaderSidebar = {
               ["total chunks", meta.totalChunks ?? meta.chunks?.length ?? ""],
               ["done chunks", meta.doneChunks ?? this._countChunks(meta, "done")],
               ["failed chunks", meta.failedChunks ?? this._countChunks(meta, "failed")],
+              ["layout analysis", meta.layoutAnalysis?.status || "text-only"],
+              ["layout mode", meta.layout?.mode || meta.layoutAnalysis?.mode || "-"],
+              ["source visuals", meta.layout?.stats?.visualBlocks ?? 0],
+              ["LaTeX expressions", meta.layout?.stats?.latexExpressions ?? 0],
+              ["PDF split folder", meta.layout?.splitOutput?.rootPath || "-"],
               ["htmlAttachmentID", meta.htmlAttachmentID || meta.htmlAttachmentId || this._bundle?.existing?.htmlAttachmentID || ""],
               ["metaAttachmentID", meta.metaAttachmentID || meta.metaAttachmentId || this._bundle?.existing?.metaAttachmentID || ""],
             ];
@@ -1493,11 +1704,15 @@ var PaperFlowReaderSidebar = {
 
         async _ask() {
           if (this._chatSending) return;
+          // 조합 중인 마지막 음절까지 확정한 뒤에 읽는다.
+          this._commitComposition();
           const question = (this._chatInput.value || "").trim();
           if (!question) return;
 
           this._chatSending = true;
           this._chatSend.disabled = true;
+          // 전송이 확정되면 Gemini 응답을 기다리지 않고 입력창부터 비운다.
+          this._clearComposer();
 
           // 보내는 시점의 첨부 스냅샷 (전송 중 칩 조작과 분리)
           const promptLabelFor = (a) => {
@@ -1555,7 +1770,11 @@ var PaperFlowReaderSidebar = {
                 .filter(a => a.data && a.mimeType)
                 .map(a => ({ label: a.promptLabel, mimeType: a.mimeType, data: a.data })),
             });
-            if (pending) pending.textContent = answer;
+            if (pending) {
+              if (typeof PTResponseRenderer !== "undefined") PTResponseRenderer.render(pending, answer);
+              else pending.textContent = answer;
+              this._chatLog.scrollTop = this._chatLog.scrollHeight;
+            }
             // 후속 질문("그 발췌에서...")이 이어지도록 첨부 사실을 이력에 남긴다
             const historyUserText = attachments.length
               ? `${question}\n(첨부: ${attachments.map(a => a.promptLabel).join(", ")})`
@@ -1571,7 +1790,6 @@ var PaperFlowReaderSidebar = {
             if (this._chatHistory.length > 24) {
               this._chatHistory = this._chatHistory.slice(-24);
             }
-            this._chatInput.value = "";
           } catch (e) {
             if (pending) {
               pending.className = "pt-msg pt-msg-error";
@@ -1609,17 +1827,58 @@ var PaperFlowReaderSidebar = {
 
           const tag = node.localName ? node.localName.toLowerCase() : "";
           const allowed = new Set([
-            "article", "section", "div", "p", "br", "span",
+            "article", "section", "figure", "figcaption", "div", "p", "br", "span", "img",
             "h1", "h2", "h3", "h4", "h5", "h6",
             "ul", "ol", "li", "strong", "b", "em", "i",
             "code", "pre", "blockquote", "table", "thead", "tbody", "tr", "th", "td",
+            "details", "summary",
           ]);
-          const outTag = allowed.has(tag) ? tag : "div";
-          const out = this.ownerDocument.createElementNS(xhtmlNS, outTag);
-
+          const mathTags = new Set([
+            "math", "mrow", "mi", "mn", "mo", "mtext", "mspace", "ms",
+            "mfrac", "msqrt", "mroot", "mstyle", "merror", "mpadded", "mphantom",
+            "msub", "msup", "msubsup", "munder", "mover", "munderover",
+            "mmultiscripts", "mprescripts", "none", "mtable", "mlabeledtr", "mtr", "mtd",
+            "menclose", "mfenced",
+          ]);
           const safeClasses = Array.from(node.classList || [])
             .filter(c => /^(pt-|badge$|partial$|failed$|level-)/.test(c))
             .join(" ");
+
+          if (tag === "img") {
+            const src = node.getAttribute("src") || "";
+            if (!/^data:image\/(?:png|jpeg|webp);base64,/i.test(src)) return null;
+            const out = this.ownerDocument.createElementNS(xhtmlNS, "canvas");
+            if (safeClasses) out.setAttribute("class", safeClasses);
+            const alt = String(node.getAttribute("alt") || "").slice(0, 500);
+            if (alt) {
+              out.setAttribute("aria-label", alt);
+              out.setAttribute("title", alt);
+            }
+            this._drawDataImageCanvas(out, src);
+            return out;
+          }
+
+          if (mathTags.has(tag)) {
+            const out = this.ownerDocument.createElementNS("http://www.w3.org/1998/Math/MathML", tag);
+            const safeMathAttributes = new Set([
+              "display", "mathvariant", "mathsize", "mathcolor", "mathbackground",
+              "scriptlevel", "displaystyle", "stretchy", "symmetric", "maxsize", "minsize",
+              "largeop", "movablelimits", "accent", "accentunder", "linethickness",
+              "numalign", "denomalign", "bevelled", "notation", "open", "close", "separators",
+              "columnalign", "rowalign", "columnspacing", "rowspacing", "columnlines", "rowlines",
+              "frame", "framespacing", "equalrows", "equalcolumns", "rowspan", "columnspan",
+              "width", "height", "depth", "lspace", "rspace", "voffset",
+            ]);
+            for (const attribute of Array.from(node.attributes || [])) {
+              const name = String(attribute.localName || attribute.name || "").toLowerCase();
+              if (safeMathAttributes.has(name)) out.setAttribute(name, String(attribute.value || "").slice(0, 200));
+            }
+            this._appendSanitizedChildren(node, out);
+            return out;
+          }
+
+          const outTag = allowed.has(tag) ? tag : "div";
+          const out = this.ownerDocument.createElementNS(xhtmlNS, outTag);
           if (safeClasses) out.setAttribute("class", safeClasses);
 
           if (node.hasAttribute("id")) {
@@ -1628,6 +1887,29 @@ var PaperFlowReaderSidebar = {
 
           this._appendSanitizedChildren(node, out);
           return out;
+        }
+
+        _drawDataImageCanvas(canvas, dataURI) {
+          try {
+            const match = String(dataURI || "").match(/^data:(image\/(?:png|jpeg|webp));base64,(.+)$/i);
+            const win = this.ownerDocument?.defaultView;
+            if (!match || !win || typeof win.createImageBitmap !== "function") return;
+            const binary = win.atob(match[2]);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            const BlobCtor = win.Blob || Blob;
+            const blob = new BlobCtor([bytes], { type: match[1] });
+            win.createImageBitmap(blob)
+              .then(bitmap => {
+                canvas.width = bitmap.width;
+                canvas.height = bitmap.height;
+                canvas.getContext("2d").drawImage(bitmap, 0, 0);
+                if (typeof bitmap.close === "function") bitmap.close();
+              })
+              .catch(error => PaperFlowReaderSidebar._warn(`source visual decode failed: ${error.message}`));
+          } catch (error) {
+            PaperFlowReaderSidebar._warn(`source visual render failed: ${error.message}`);
+          }
         }
 
         _plainTextWithBreaks(html) {

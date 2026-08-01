@@ -9,6 +9,7 @@ var PTRateLimiter = {
   _dailyCount: 0,
   _dailyResetTime: 0,
   _initialized: false,
+  _slotChain: Promise.resolve(),
 
   init() {
     this._ensureInit();
@@ -27,30 +28,41 @@ var PTRateLimiter = {
   // ── 요청 전 대기 (필요 시) ─────────────────────────────────────────────────
   async waitForSlot() {
     this._ensureInit();
-    // 일일 한도 초과 체크
-    this._resetDailyIfNeeded();
-    if (this._dailyCount >= this.RPD_LIMIT) {
-      throw new PTRateLimitError(
-        Math.max(this._dailyResetTime - Date.now(), 60000)
-      );
+    // 병렬 worker들이 동시에 타임스탬프 배열을 읽으면 RPM 한도를 한꺼번에
+    // 통과할 수 있다. 슬롯 계산/기록만 짧게 직렬화하고 실제 fetch는 병렬로 둔다.
+    const previous = this._slotChain;
+    let release;
+    this._slotChain = new Promise(resolve => { release = resolve; });
+    await previous;
+    try {
+      await this._waitForSlotLocked();
+    } finally {
+      release();
     }
+  },
 
-    // RPM 체크: 최근 60초 내 요청 수
-    const now = Date.now();
-    const oneMinuteAgo = now - 60000;
-    this._requestTimestamps = this._requestTimestamps.filter(t => t > oneMinuteAgo);
+  async _waitForSlotLocked() {
+    while (true) {
+      this._resetDailyIfNeeded();
+      if (this._dailyCount >= this.RPD_LIMIT) {
+        throw new PTRateLimitError(
+          Math.max(this._dailyResetTime - Date.now(), 60000)
+        );
+      }
 
-    if (this._requestTimestamps.length >= this.RPM_LIMIT) {
-      // 가장 오래된 요청이 1분 지날 때까지 대기
+      const now = Date.now();
+      const oneMinuteAgo = now - 60000;
+      this._requestTimestamps = this._requestTimestamps.filter(t => t > oneMinuteAgo);
+      if (this._requestTimestamps.length < this.RPM_LIMIT) break;
+
       const oldestInWindow = this._requestTimestamps[0];
-      const waitMs = (oldestInWindow + 60000) - now + 100; // +100ms 여유
+      const waitMs = Math.max(0, (oldestInWindow + 60000) - now + 100);
       if (waitMs > 0) {
         PTLogger.info(`RPM 대기: ${Math.ceil(waitMs / 1000)}초`);
         await this._sleep(waitMs);
       }
     }
 
-    // 슬롯 기록
     this._requestTimestamps.push(Date.now());
     this._dailyCount++;
     this._saveState();

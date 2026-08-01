@@ -60,8 +60,10 @@ html|* {
 #pt-root {
   display: flex;
   flex-direction: column;
+  width: 100%;
   height: calc(100vh - 8px);
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
   padding: var(--pf-md);
   gap: var(--pf-sm);
@@ -74,7 +76,9 @@ html|* {
 /* ── Main Layout Workspace ────────────────────────────────────────────────── */
 #pt-main {
   flex: 1 1 auto;
+  width: 100%;
   min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -172,13 +176,15 @@ html|* {
 /* ── Content card (the only vertical scroller) ───────────────────────────── */
 #pt-content {
   flex: 1 1 auto;
+  width: 100%;
   min-height: 180px;
+  min-width: 0;
   overflow-y: auto;
   overflow-x: hidden;
   border: 1px solid var(--pf-hairline);
   border-radius: var(--pf-r-lg);
   background: var(--pf-canvas);
-  padding: var(--pf-lg) var(--pf-xl);
+  padding: clamp(14px, 2.4vw, var(--pf-lg)) clamp(14px, 3.2vw, var(--pf-xl));
   color: var(--pf-body);
   font-size: 15px;
   line-height: 1.65;
@@ -212,7 +218,21 @@ html|* {
 }
 
 .pt-doc {
-  max-width: 760px;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  margin: 0;
+}
+
+.pt-doc > html|*,
+.pt-doc html|section,
+.pt-doc html|article,
+.pt-doc html|div,
+.pt-doc html|p,
+.pt-doc html|figure,
+.pt-doc html|table {
+  max-width: 100%;
+  min-width: 0;
 }
 
 .pt-doc html|h1,
@@ -241,6 +261,7 @@ html|* {
 .pt-doc html|section,
 .pt-doc html|li {
   line-height: 1.68;
+  overflow-wrap: anywhere;
 }
 
 .pt-doc html|p { margin: 10px 0 14px; }
@@ -268,15 +289,132 @@ html|* {
   white-space: pre-wrap;
 }
 
+.pt-translation-view .pt-translation > html|p,
+.pt-translation-view .pt-original > html|p {
+  margin: 0 0 1em;
+}
+
+.pt-translation-view .pt-translation > html|p:last-child,
+.pt-translation-view .pt-original > html|p:last-child {
+  margin-bottom: 0;
+}
+
+/* Legacy translation HTML stored line breaks as direct <br> elements. */
+.pt-translation-view .pt-translation > html|br,
+.pt-translation-view .pt-original > html|br {
+  display: block;
+  content: "";
+  margin-top: 0.75em;
+}
+
 .pt-translation-view .pt-original {
   color: var(--pf-muted);
   font-size: 13.5px;
   white-space: pre-wrap;
 }
 
+/* Page-aware source visuals. Privileged panels render the sanitized data URI
+   into a canvas, which keeps the attachment HTML and panel representation in
+   sync without permitting remote image URLs. */
+.pt-translation-view .pt-source-visual {
+  width: 100%;
+  max-width: 100%;
+  margin: 22px auto 8px;
+  padding: 12px;
+  border: 1px solid var(--pf-hairline);
+  border-radius: var(--pf-r-md);
+  background: var(--pf-canvas);
+  text-align: center;
+}
+
+.pt-translation-view .pt-source-visual-image {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.pt-translation-view .pt-source-visual html|figcaption {
+  margin-top: 10px;
+  color: var(--pf-body);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.pt-translation-view .pt-caption-translation {
+  display: block;
+}
+
+.pt-translation-view .pt-source-page {
+  margin-left: 6px;
+  color: var(--pf-muted);
+  font-size: 11px;
+}
+
+.pt-translation-view .pt-source-caption {
+  margin: 7px 12px 18px;
+  color: var(--pf-muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.pt-translation-view .pt-equation {
+  width: 100%;
+  max-width: 100%;
+  margin: 20px auto;
+  padding: 9px 12px;
+  overflow-x: auto;
+  text-align: center;
+}
+
+.pt-translation-view .pt-equation-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 16px;
+  min-width: max-content;
+}
+
+.pt-translation-view .pt-equation-math {
+  justify-self: center;
+  font-size: 1.08em;
+}
+
+.pt-translation-view .pt-equation-number {
+  justify-self: end;
+  color: var(--pf-body);
+  font-family: Georgia, serif;
+  white-space: nowrap;
+}
+
+.pt-translation-view .pt-equation-latex {
+  margin-top: 5px;
+  color: var(--pf-muted);
+  font-size: 11px;
+  text-align: left;
+}
+
+.pt-translation-view .pt-equation-latex html|code {
+  display: block;
+  margin-top: 5px;
+  padding: 6px 8px;
+  border-radius: var(--pf-r-sm);
+  background: var(--pf-surface-soft);
+  white-space: pre-wrap;
+}
+
+.pt-translation-view .pt-math-inline {
+  display: inline-block;
+  margin: 0 0.08em;
+  vertical-align: -0.15em;
+}
+
 /* ── Meta (key/value card + raw json) ────────────────────────────────────── */
 .pt-meta-summary {
   width: 100%;
+  max-width: 100%;
   border-collapse: separate;
   border-spacing: 0;
   margin-bottom: 18px;
@@ -312,6 +450,8 @@ html|* {
 }
 
 .pt-raw-json {
+  width: 100%;
+  max-width: 100%;
   margin: 0;
   max-height: 320px;
   overflow: auto;
@@ -327,6 +467,29 @@ html|* {
   color: var(--pf-ink);
 }
 
+@media (max-width: 560px) {
+  #pt-root {
+    padding: var(--pf-sm);
+  }
+
+  #pt-content {
+    padding: var(--pf-sm);
+  }
+
+  #pt-tabs {
+    overflow-x: auto;
+  }
+
+  .pt-tab {
+    flex: 1 0 auto;
+    padding-inline: 12px;
+  }
+
+  .pt-meta-summary html|th {
+    width: 118px;
+  }
+}
+
 .pt-meta-view html|h2 {
   font-size: 14px;
   font-weight: 600;
@@ -339,8 +502,13 @@ html|* {
   display: flex;
   flex: 0 0 var(--paperflow-chat-height, 210px);
   height: var(--paperflow-chat-height, 210px);
-  min-height: 170px;
-  max-height: 45%;
+  /* 입력창이 커지거나 첨부 칩이 붙어도 컴포저 아래쪽이 잘려서 내려가지 않도록
+     내용이 요구하는 최소 높이를 보장한다. 부족한 높이는 위쪽 본문 pane에서
+     가져오므로 입력창은 아래가 아니라 위로 자란다.
+     min-content는 쓸 수 없다 — overflow:hidden이라 스크롤 컨테이너로 취급되어
+     0으로 계산된다. 대신 JS가 실측한 px 값을 --paperflow-chat-min으로 내려준다. */
+  min-height: var(--paperflow-chat-min, 170px);
+  max-height: 72%;
   flex-direction: column;
   gap: var(--pf-xs);
   overflow: hidden;
@@ -349,6 +517,28 @@ html|* {
   background: var(--pf-canvas);
   box-shadow: var(--pf-shadow);
   padding: var(--pf-sm) var(--pf-base) var(--pf-base);
+}
+
+/* Divider snap states: keep the divider visible so the hidden pane can be
+   restored by dragging in the opposite direction. */
+#pt-root.pt-layout-content-only #pt-chat {
+  display: none;
+}
+
+#pt-root.pt-layout-content-only #pt-content {
+  flex: 1 1 0;
+}
+
+#pt-root.pt-layout-chat-only #pt-content {
+  display: none;
+}
+
+#pt-root.pt-layout-chat-only #pt-chat {
+  display: flex;
+  flex: 1 1 0;
+  height: auto;
+  min-height: 0;
+  max-height: none;
 }
 
 #pt-chat-head {
@@ -400,8 +590,138 @@ html|* {
   color: var(--pf-down);
 }
 
+/* ── Chat attachments (selection/file/image/PDF) ────────────────────────── */
+#pt-chat-attachments {
+  flex: 0 0 auto;
+  display: none;
+  flex-flow: row wrap;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 2px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+#pt-chat-attachments.pt-has-attachments { display: flex; }
+
+.pt-attach-chip {
+  display: flex;
+  flex: 1 1 100%;
+  max-width: 100%;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 9px 8px 11px;
+  border: 1px solid #d7e3ff;
+  border-radius: var(--pf-r-md);
+  background: #eef4ff;
+  color: var(--pf-ink);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.pt-attach-chip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.pt-attach-chip-source {
+  overflow: hidden;
+  color: var(--pf-ink);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pt-attach-chip-preview {
+  color: var(--pf-body);
+  font-size: 11.5px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.pt-attach-chip-image {
+  position: relative;
+  flex: 0 0 auto;
+  align-self: flex-start;
+  width: auto;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.pt-attach-chip-img {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  max-height: 96px;
+  border: 1px solid #d7e3ff;
+  border-radius: var(--pf-r-sm);
+  background: var(--pf-canvas);
+  object-fit: contain;
+}
+
+.pt-attach-chip-remove {
+  appearance: none;
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  border: 0;
+  border-radius: var(--pf-r-pill);
+  background: transparent;
+  color: var(--pf-muted);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.pt-attach-chip-remove:hover { color: var(--pf-down); background: rgba(207, 32, 47, 0.08); }
+
+.pt-attach-img-remove {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: rgba(10, 11, 13, 0.58);
+  color: #fff;
+}
+
+.pt-attach-img-remove:hover { color: #fff; background: rgba(207, 32, 47, 0.86); }
+
+.pt-msg-img {
+  display: inline-block;
+  width: auto;
+  max-width: 100%;
+  max-height: 150px;
+  margin-top: 7px;
+  margin-right: 5px;
+  border: 1px solid #d7e3ff;
+  border-radius: var(--pf-r-sm);
+  background: var(--pf-canvas);
+  object-fit: contain;
+  vertical-align: top;
+}
+
+.pt-msg-attach-note {
+  margin-top: 7px;
+  padding-top: 5px;
+  border-top: 1px dashed #d7e3ff;
+  color: var(--pf-muted);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: normal;
+}
+
 /* ── Composer (modern assistant input) ───────────────────────────────────── */
 .pt-chat-composer {
+  position: relative;
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
@@ -420,9 +740,12 @@ html|* {
 
 #pt-chat-input {
   width: 100%;
+  /* 실제 높이는 JS auto-grow가 입력 줄 수에 맞춰 인라인으로 지정한다.
+     여기서는 시작 높이와 상한만 정의한다. */
   min-height: 72px;
-  max-height: 140px;
+  max-height: 200px;
   resize: none;
+  overflow-y: hidden;
   border: 0;
   outline: 0;
   background: transparent;
@@ -435,6 +758,32 @@ html|* {
 
 #pt-chat-input::placeholder { color: var(--pf-muted); }
 #pt-chat-input:disabled { color: var(--pf-muted); }
+
+/* 추천 질문 오버레이 — textarea 첫 줄 위에 겹쳐 두고 천천히 교차시킨다.
+   pointer-events가 없으므로 클릭은 그대로 textarea로 전달된다. */
+.pt-composer-hint {
+  position: absolute;
+  top: 14px;
+  left: 16px;
+  right: 16px;
+  pointer-events: none;
+  color: var(--pf-muted);
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+
+.pt-composer-hint.pt-hint-visible { opacity: 1; }
+
+/* 타이핑이 시작되면 페이드 없이 즉시 사라진다. (교차 회전만 천천히 진행) */
+.pt-composer-hint.pt-hint-off {
+  opacity: 0;
+  transition: none;
+}
 
 .pt-composer-actions {
   display: flex;
@@ -517,3 +866,151 @@ html|* {
 .pt-divider.pt-dragging::after {
   background: var(--pf-on-primary);
 }
+/* ── Rendered Gemini Markdown and LaTeX ─────────────────────────────────── */
+.pt-msg.pt-markdown {
+  white-space: normal;
+}
+
+.pt-markdown html|p {
+  margin: 0 0 0.72em;
+  line-height: 1.58;
+}
+
+.pt-markdown html|p:last-child { margin-bottom: 0; }
+
+.pt-markdown html|h1,
+.pt-markdown html|h2,
+.pt-markdown html|h3,
+.pt-markdown html|h4,
+.pt-markdown html|h5,
+.pt-markdown html|h6 {
+  margin: 0.95em 0 0.42em;
+  color: var(--pf-ink);
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.pt-markdown html|h1:first-child,
+.pt-markdown html|h2:first-child,
+.pt-markdown html|h3:first-child { margin-top: 0; }
+.pt-markdown html|h1 { font-size: 1.28em; }
+.pt-markdown html|h2 { font-size: 1.17em; }
+.pt-markdown html|h3 { font-size: 1.08em; }
+
+.pt-markdown html|ul,
+.pt-markdown html|ol {
+  margin: 0.5em 0 0.78em 1.5em;
+  padding: 0;
+}
+
+.pt-markdown html|li { margin: 0.28em 0; line-height: 1.52; }
+.pt-markdown .pt-md-task { margin: 0 0.42em 0 -1.25em; vertical-align: -0.1em; }
+
+.pt-markdown html|blockquote {
+  margin: 0.6em 0;
+  padding: 0.35em 0 0.35em 0.85em;
+  border-left: 3px solid var(--pf-primary);
+  color: var(--pf-body);
+}
+
+.pt-markdown html|hr {
+  height: 1px;
+  margin: 0.9em 0;
+  border: 0;
+  background: var(--pf-hairline);
+}
+
+.pt-markdown html|a { color: var(--pf-primary); text-decoration: underline; text-underline-offset: 2px; }
+.pt-markdown html|strong { color: var(--pf-ink); font-weight: 700; }
+
+.pt-md-inline-code,
+.pt-md-code-block html|code,
+.pt-md-math-fallback {
+  font-family: var(--pf-mono);
+}
+
+.pt-md-inline-code {
+  padding: 0.08em 0.34em;
+  border: 1px solid var(--pf-hairline-soft);
+  border-radius: 5px;
+  background: var(--pf-surface-strong);
+  font-size: 0.9em;
+}
+
+.pt-md-code-block {
+  max-width: 100%;
+  margin: 0.65em 0 0.85em;
+  padding: 0.75em 0.9em;
+  overflow-x: auto;
+  border: 1px solid var(--pf-hairline);
+  border-radius: var(--pf-r-sm);
+  background: #f4f5f7;
+  color: var(--pf-ink);
+  font-size: 0.9em;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+.pt-md-table-wrap {
+  max-width: 100%;
+  margin: 0.65em 0 0.9em;
+  overflow-x: auto;
+  border: 1px solid var(--pf-hairline);
+  border-radius: var(--pf-r-sm);
+}
+
+.pt-md-table {
+  width: 100%;
+  min-width: max-content;
+  border-collapse: collapse;
+  background: var(--pf-canvas);
+  color: var(--pf-ink);
+  font-size: 0.94em;
+}
+
+.pt-md-table html|th,
+.pt-md-table html|td {
+  padding: 0.52em 0.68em;
+  border-right: 1px solid var(--pf-hairline-soft);
+  border-bottom: 1px solid var(--pf-hairline-soft);
+  text-align: left;
+  vertical-align: top;
+}
+
+.pt-md-table html|th:last-child,
+.pt-md-table html|td:last-child { border-right: 0; }
+.pt-md-table html|tbody html|tr:last-child html|td { border-bottom: 0; }
+.pt-md-table html|th { background: var(--pf-surface-strong); font-weight: 650; }
+.pt-md-table html|tbody html|tr:nth-child(even) { background: var(--pf-surface-soft); }
+
+.pt-md-math-inline {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  margin: 0 0.08em;
+  vertical-align: -0.2em;
+}
+
+.pt-md-math-block {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  max-width: 100%;
+  align-items: center;
+  column-gap: 12px;
+  margin: 0.75em 0 0.95em;
+  padding: 0.48em 0.25em;
+  overflow-x: auto;
+  color: var(--pf-ink);
+  text-align: center;
+}
+
+.pt-md-math-block *|math,
+.pt-md-math-inline *|math {
+  color: var(--pf-ink);
+  font-size: 1.08em;
+}
+
+.pt-md-math-block *|math { justify-self: center; min-width: max-content; }
+.pt-md-equation-label { justify-self: end; color: var(--pf-body); font-family: Georgia, serif; white-space: nowrap; }
+.pt-md-math-fallback { color: var(--pf-ink); white-space: pre-wrap; }

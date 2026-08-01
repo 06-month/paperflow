@@ -6,12 +6,16 @@ window.PTPrefsUI = {
     const skipRefs   = Zotero.Prefs.get("extensions.paper-translator.skipReferences") !== false;
     const summLines  = String(Zotero.Prefs.get("extensions.paper-translator.summaryLines") || 3);
     const autoTrans  = Zotero.Prefs.get("extensions.paper-translator.autoTranslate") === true;
+    const layoutAware = Zotero.Prefs.get("extensions.paper-translator.layoutAwareTranslation") !== false;
+    const parallelRequests = String(Zotero.Prefs.get("extensions.paper-translator.parallelRequests") || 6);
 
     const q = id => document.getElementById(id);
     if (q("pt-api-key"))       q("pt-api-key").value = apiKey;
     if (q("pt-skip-refs"))     q("pt-skip-refs").checked = skipRefs;
     if (q("pt-summary-lines")) q("pt-summary-lines").value = summLines;
     if (q("pt-auto-translate")) q("pt-auto-translate").checked = autoTrans;
+    if (q("pt-layout-aware")) q("pt-layout-aware").checked = layoutAware;
+    if (q("pt-parallel-requests")) q("pt-parallel-requests").value = parallelRequests;
 
     if (apiKey) this._status("API 키 저장됨 ✓", "green");
   },

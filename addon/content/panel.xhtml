@@ -32,15 +32,17 @@
         <html:div id="pt-divider" class="pt-divider"></html:div>
 
         <html:section id="pt-chat" aria-label="Gemini Chat">
-          <html:div id="pt-chat-log">
-            <html:div class="pt-msg pt-msg-assistant">안녕하세요. 이 논문의 요약과 번역 내용을 바탕으로 답변할 수 있습니다.</html:div>
-          </html:div>
+          <html:div id="pt-chat-log"></html:div>
+          <html:div id="pt-chat-attachments"></html:div>
           <html:div id="pt-chat-composer" class="pt-chat-composer">
-            <html:textarea id="pt-chat-input" placeholder="무엇이든 질문하세요."></html:textarea>
+            <html:textarea id="pt-chat-input" rows="1" placeholder="무엇이든 질문하세요."
+              aria-label="무엇이든 질문하세요."></html:textarea>
+            <!-- 추천 질문이 천천히 교차되는 오버레이. JS가 켜지면 위 placeholder는 비운다. -->
+            <html:div id="pt-composer-hint" class="pt-composer-hint" aria-hidden="true"></html:div>
             <html:div class="pt-composer-actions">
               <html:div class="pt-composer-tools">
                 <html:button id="pt-chat-attach" type="button" class="pt-icon-btn"
-                  title="첨부파일은 이후 버전에서 지원 예정입니다." aria-label="첨부파일은 이후 버전에서 지원 예정입니다." disabled="true">+</html:button>
+                  title="내 컴퓨터에서 파일을 선택해 대화에 첨부합니다." aria-label="내 컴퓨터에서 파일을 선택해 대화에 첨부합니다.">+</html:button>
               </html:div>
               <html:button id="pt-chat-send" type="button" class="pt-send-btn" title="Send" aria-label="Send">↑</html:button>
             </html:div>

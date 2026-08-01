@@ -23,7 +23,7 @@ var PTStorage = {
     const sections = this._mergeChunksToSections(jobs, meta.sections);
 
     // 2. translated.ko.html 생성 및 저장
-    const htmlContent = this._buildHTML(meta.title, sections);
+    const htmlContent = this._buildHTML(meta.title, sections, meta.layout || null, jobs);
     let htmlAttachment;
     try {
       htmlAttachment = await this._saveHTMLAttachment(parentItem, htmlContent);
@@ -60,6 +60,11 @@ var PTStorage = {
       const prev = stored.get(job.chunkId);
       if (!prev || prev.status !== "done" || !prev.translation) continue;
       if (prev.textHash && prev.textHash !== PTConstants.hashText(job.text)) continue;
+      if (Array.isArray(job.blocks) && job.blocks.length) {
+        const previousTranslations = prev.blockTranslations || {};
+        if (!job.blocks.every(block => previousTranslations[block.id])) continue;
+        job.blockTranslations = { ...previousTranslations };
+      }
       job.translation = prev.translation;
       job.summary = prev.summary || "";
       job.status = "done";
@@ -120,10 +125,19 @@ var PTStorage = {
   },
 
   // ── translated.ko.html 생성 ────────────────────────────────────────────────
-  _buildHTML(title, sections) {
+  _buildHTML(title, sections, layout = null, jobs = []) {
+    if (layout?.pages?.length) {
+      return this._buildLayoutHTML(title, sections, layout, jobs);
+    }
     const esc = s => (s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
     const nl2br = s => esc(s).replace(/\n/g, "<br>");
-
+    const renderParagraphs = s => String(s || "")
+      .replace(/\r\n?/g, "\n")
+      .trim()
+      .split(/\n\s*\n+/)
+      .filter(Boolean)
+      .map(paragraph => `<p>${esc(paragraph).replace(/\n/g, "<br>")}</p>`)
+      .join("");
     const renderSection = (sec, depth = 0) => {
       const hTag = `h${Math.min(depth + 2, 6)}`;
       const statusBadge = sec.status === "partial"
@@ -139,9 +153,9 @@ var PTStorage = {
         html += `<div class="pt-summary"><strong>요약:</strong> ${nl2br(sec.summary)}</div>`;
       }
       if (sec.translation) {
-        html += `<div class="pt-translation">${nl2br(sec.translation)}</div>`;
+        html += `<div class="pt-translation">${renderParagraphs(sec.translation)}</div>`;
       } else if (sec.body) {
-        html += `<div class="pt-original">${nl2br(sec.body)}</div>`;
+        html += `<div class="pt-original">${renderParagraphs(sec.body)}</div>`;
       }
 
       if (sec.subsections && sec.subsections.length > 0) {
@@ -165,6 +179,9 @@ var PTStorage = {
   h4, h5, h6 { font-size: 1em; margin-top: 1.2em; color: #444; }
   .pt-summary { background: #f0f6ff; border-left: 3px solid #4a90e2; padding: 8px 12px; margin: 8px 0; font-size: 0.92em; border-radius: 0 4px 4px 0; }
   .pt-translation { margin: 8px 0 16px; }
+  .pt-translation p, .pt-original p { margin: 0 0 1em; }
+  .pt-translation p:last-child, .pt-original p:last-child { margin-bottom: 0; }
+  .pt-translation > br, .pt-original > br { display: block; content: ""; margin-top: 0.75em; }
   .pt-original { margin: 8px 0 16px; color: #666; font-style: italic; font-size: 0.9em; }
   .pt-section { border-bottom: 1px solid #eee; padding-bottom: 12px; margin-bottom: 12px; }
   .badge { font-size: 0.7em; padding: 2px 6px; border-radius: 3px; vertical-align: middle; }
@@ -179,6 +196,264 @@ var PTStorage = {
 ${sections.map(s => renderSection(s)).join("\n")}
 </body>
 </html>`;
+  },
+
+  _buildLayoutHTML(title, sections, layout, jobs) {
+    const esc = value => String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+    const renderParagraphs = (value, block = null) => String(value || "")
+      .replace(/\r\n?/g, "\n")
+      .trim()
+      .split(/\n\s*\n+/)
+      .filter(Boolean)
+      .map(paragraph => `<p>${this._renderTextWithMath(paragraph, block, esc).replace(/\n/g, "<br>")}</p>`)
+      .join("");
+
+    const translationParts = new Map();
+    const summaries = new Map();
+    const sectionStatuses = new Map();
+    for (const job of jobs || []) {
+      if (job.summary) summaries.set(job.sectionId, job.summary);
+      if (!sectionStatuses.has(job.sectionId)) sectionStatuses.set(job.sectionId, []);
+      sectionStatuses.get(job.sectionId).push(job.status);
+      if (job.status !== "done" || !Array.isArray(job.blocks)) continue;
+      for (const block of job.blocks) {
+        const translation = String(job.blockTranslations?.[block.id] || "").trim();
+        if (!translation) continue;
+        const sourceId = block.sourceBlockId || block.id;
+        if (!translationParts.has(sourceId)) translationParts.set(sourceId, []);
+        translationParts.get(sourceId).push({
+          partIndex: block.partIndex || 0,
+          translation,
+        });
+      }
+    }
+
+    const translationFor = blockId => (translationParts.get(blockId) || [])
+      .sort((a, b) => a.partIndex - b.partIndex)
+      .map(part => part.translation)
+      .join(" ")
+      .trim();
+    const summaryFor = sectionId => summaries.get(sectionId) || "";
+    const renderedSummaries = new Set();
+    const renderSectionSummary = sectionId => {
+      if (!sectionId || renderedSummaries.has(sectionId)) return "";
+      renderedSummaries.add(sectionId);
+      const summary = summaryFor(sectionId);
+      return summary
+        ? `<div class="pt-summary"><strong>요약:</strong> ${esc(summary).replace(/\n/g, "<br>")}</div>`
+        : "";
+    };
+    const statusFor = sectionId => {
+      const statuses = sectionStatuses.get(sectionId) || [];
+      if (!statuses.length) return "skipped";
+      return statuses.every(status => status === "done") ? "done" : "partial";
+    };
+    const headingTag = text => {
+      const value = String(text || "").trim();
+      if (/^\d+\.\d+\.\d+/.test(value)) return "h4";
+      if (/^(?:\d+\.\d+|[A-Z]\.)\s+/.test(value)) return "h3";
+      return "h2";
+    };
+    const blockMap = new Map((layout.pages || []).flatMap(page => page.blocks || []).map(block => [block.id, block]));
+
+    const renderBlock = block => {
+      const id = esc(block.id);
+      const page = Number(block.pageNumber || 0);
+      if (block.type === "header" || block.type === "footer") return "";
+      if (block.type === "reference" && block.skipTranslation) return "";
+      if (block.type === "title") return "";
+
+      if (block.type === "heading") {
+        const tag = headingTag(block.text);
+        const badge = statusFor(block.sectionId) === "partial"
+          ? `<span class="badge partial">일부 번역</span>`
+          : "";
+        return `<${tag} class="pt-layout-heading" data-block-id="${id}">${esc(block.text)} ${badge}</${tag}>`
+          + renderSectionSummary(block.sectionId);
+      }
+
+      if (["paragraph", "list", "other", "reference"].includes(block.type)) {
+        const translated = translationFor(block.id);
+        const className = translated ? "pt-translation pt-layout-text" : "pt-original pt-layout-text";
+        const content = translated || block.text;
+        return renderSectionSummary(block.sectionId)
+          + `<div class="${className}" data-block-id="${id}" data-page="${page}">${renderParagraphs(content, block)}</div>`;
+      }
+
+      if (block.type === "caption") {
+        if (block.parentId && blockMap.has(block.parentId)) return "";
+        const translated = translationFor(block.id);
+        return `<p class="pt-source-caption" data-block-id="${id}" data-page="${page}">${this._renderTextWithMath(translated || block.text, block, esc)}</p>`;
+      }
+
+      if (block.type === "equation") {
+        const expressions = (block.math || []).filter(math => math.latex);
+        if (!expressions.length) {
+          return block.text
+            ? `<div class="pt-equation pt-equation-fallback" data-block-id="${id}" data-page="${page}"><code>${esc(block.text)}</code></div>`
+            : "";
+        }
+        return `<div class="pt-equation" data-block-id="${id}" data-page="${page}">
+${expressions.map(math => this._renderMathExpression(math, true, esc)).join("\n")}
+</div>`;
+      }
+
+      if (["figure", "table"].includes(block.type)) {
+        const src = String(block.dataURI || "");
+        if (!/^data:image\/(?:png|jpeg|webp);base64,/i.test(src)) return "";
+        const label = block.type === "figure"
+          ? "Original Figure"
+          : "Original Table";
+        const caption = block.captionId ? blockMap.get(block.captionId) : null;
+        const captionText = caption ? (translationFor(caption.id) || caption.text) : "";
+        const captionHTML = captionText
+          ? `<span class="pt-caption-translation">${this._renderTextWithMath(captionText, caption, esc)}</span>`
+          : `<span class="pt-caption-fallback">${label}</span>`;
+        return `<figure class="pt-source-visual pt-source-${block.type}" data-block-id="${id}" data-page="${page}">
+  <img class="pt-source-visual-image" src="${src}" alt="${label}, page ${page}">
+  <figcaption>${captionHTML}<span class="pt-source-page">원본 p. ${page}</span></figcaption>
+</figure>`;
+      }
+      return "";
+    };
+
+    const pagesHTML = (layout.pages || []).map(page => {
+      const blocks = (page.blocks || []).slice().sort((a, b) => a.order - b.order);
+      const content = blocks.map(renderBlock).filter(Boolean).join("\n");
+      return content ? `<section class="pt-layout-page" data-page="${page.pageNumber}">${content}</section>` : "";
+    }).filter(Boolean).join("\n");
+
+    return `<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="generator" content="PaperFlow v${PTConstants.VERSION}">
+<title>${esc(title)} — 번역본</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 880px; margin: 40px auto; padding: 0 24px; line-height: 1.72; color: #222; }
+  h1 { font-size: 1.65em; border-bottom: 2px solid #4a90e2; padding-bottom: 9px; }
+  h2 { font-size: 1.3em; margin: 2.1em 0 0.8em; color: #1a1a1a; }
+  h3 { font-size: 1.12em; margin: 1.65em 0 0.7em; color: #333; }
+  h4 { font-size: 1.02em; margin: 1.35em 0 0.65em; color: #444; }
+  .pt-meta { font-size: 0.8em; color: #888; margin-bottom: 28px; }
+  .pt-layout-page { margin: 0; padding: 0; }
+  .pt-layout-text { margin: 0 0 1em; }
+  .pt-layout-text p { margin: 0 0 1em; }
+  .pt-layout-text p:last-child { margin-bottom: 0; }
+  .pt-original { color: #666; font-style: italic; font-size: 0.92em; }
+  .pt-summary { background: #f0f6ff; border-left: 3px solid #4a90e2; padding: 8px 12px; margin: 8px 0 14px; font-size: 0.92em; border-radius: 0 4px 4px 0; }
+  .pt-source-visual { margin: 24px auto 8px; padding: 12px; border: 1px solid #e2e5e9; border-radius: 10px; background: #fff; text-align: center; break-inside: avoid; }
+  .pt-source-visual-image { display: block; max-width: 100%; height: auto; margin: 0 auto; object-fit: contain; }
+  .pt-source-visual figcaption { margin-top: 11px; color: #555; font-size: 0.9em; line-height: 1.55; text-align: left; }
+  .pt-caption-translation { display: block; }
+  .pt-source-page { margin-left: 5px; color: #999; }
+  .pt-source-caption { margin: 7px 14px 20px; color: #555; font-family: Georgia, serif; font-size: 0.9em; line-height: 1.5; }
+  .pt-equation { margin: 22px auto; padding: 10px 16px; overflow-x: auto; text-align: center; break-inside: avoid; }
+  .pt-equation-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 18px; min-width: max-content; }
+  .pt-equation-math { justify-self: center; font-size: 1.08em; }
+  .pt-equation-number { justify-self: end; color: #444; font-family: Georgia, serif; white-space: nowrap; }
+  .pt-equation-latex { margin-top: 5px; color: #888; font-size: 0.72em; text-align: left; }
+  .pt-equation-latex summary { cursor: pointer; user-select: none; }
+  .pt-equation-latex code { display: block; margin-top: 5px; padding: 6px 8px; border-radius: 5px; background: #f6f7f8; white-space: pre-wrap; }
+  .pt-math-inline { display: inline-block; vertical-align: -0.15em; margin: 0 0.08em; }
+  .badge { font-size: 0.65em; padding: 2px 6px; border-radius: 3px; vertical-align: middle; }
+  .badge.partial { background: #fff3cd; color: #856404; }
+</style>
+</head>
+<body>
+<h1>${esc(title)}</h1>
+<p class="pt-meta">번역 엔진: ${esc(PTConstants.MODEL_LABEL)} | 구조화 모드: PDF page layout | 생성: ${new Date().toLocaleString("ko-KR")}</p>
+${pagesHTML}
+</body>
+</html>`;
+  },
+
+  _renderTextWithMath(value, block, esc) {
+    const escapeHTML = esc || (text => String(text || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;"));
+    let html = escapeHTML(String(value || ""));
+    for (const math of block?.math || []) {
+      if (!math?.token || !math?.latex) continue;
+      const token = escapeHTML(math.token);
+      html = html.split(token).join(this._renderMathExpression(math, Boolean(math.display), escapeHTML));
+    }
+    return html;
+  },
+
+  _renderMathExpression(math, forceDisplay, esc) {
+    const display = Boolean(forceDisplay || math?.display);
+    const latex = String(math?.latex || "").trim();
+    const label = String(math?.label || "").replace(/[(){}]/g, "").trim();
+    const mathml = this._sanitizeMathML(math?.mathml, display, esc);
+    const delimiter = display ? "$$" : "$";
+    const taggedLatex = display && label ? `${latex} \\tag{${label}}` : latex;
+    const source = `${delimiter}${taggedLatex}${delimiter}`;
+    const rendered = mathml || `<code class="pt-math-fallback">${esc(source)}</code>`;
+
+    if (!display) {
+      return `<span class="pt-math-inline" title="${esc(source)}">${rendered}</span>`;
+    }
+    return `<div class="pt-equation-row">
+  <span class="pt-equation-math">${rendered}</span>
+  ${label ? `<span class="pt-equation-number">(${esc(label)})</span>` : ""}
+</div>
+<details class="pt-equation-latex"><summary>LaTeX</summary><code>${esc(source)}</code></details>`;
+  },
+
+  _sanitizeMathML(rawMathML, display, esc) {
+    const raw = String(rawMathML || "").trim();
+    if (!raw || raw.length > 30000 || typeof DOMParser === "undefined") return "";
+    const allowedTags = new Set([
+      "math", "mrow", "mi", "mn", "mo", "mtext", "mspace", "ms",
+      "mfrac", "msqrt", "mroot", "mstyle", "merror", "mpadded", "mphantom",
+      "msub", "msup", "msubsup", "munder", "mover", "munderover",
+      "mmultiscripts", "mprescripts", "none", "mtable", "mlabeledtr", "mtr", "mtd",
+      "menclose", "mfenced",
+    ]);
+    const allowedAttributes = new Set([
+      "display", "mathvariant", "mathsize", "mathcolor", "mathbackground",
+      "scriptlevel", "displaystyle", "stretchy", "symmetric", "maxsize", "minsize",
+      "largeop", "movablelimits", "accent", "accentunder", "linethickness",
+      "numalign", "denomalign", "bevelled", "notation", "open", "close", "separators",
+      "columnalign", "rowalign", "columnspacing", "rowspacing", "columnlines", "rowlines",
+      "frame", "framespacing", "equalrows", "equalcolumns", "rowspan", "columnspan",
+      "width", "height", "depth", "lspace", "rspace", "voffset",
+    ]);
+    try {
+      const document = new DOMParser().parseFromString(raw, "application/xml");
+      const root = document.documentElement;
+      if (!root || root.localName?.toLowerCase() !== "math" || document.querySelector("parsererror")) return "";
+      const serialize = (node, isRoot = false) => {
+        if (node.nodeType === 3) return esc(node.nodeValue || "");
+        if (node.nodeType !== 1) return "";
+        const tag = String(node.localName || "").toLowerCase();
+        if (!allowedTags.has(tag)) return Array.from(node.childNodes || []).map(child => serialize(child)).join("");
+        const attributes = [];
+        for (const attribute of Array.from(node.attributes || [])) {
+          const name = String(attribute.localName || attribute.name || "").toLowerCase();
+          if (isRoot && name === "display") continue;
+          if (!allowedAttributes.has(name)) continue;
+          attributes.push(`${name}="${esc(String(attribute.value || "").slice(0, 200))}"`);
+        }
+        if (isRoot) {
+          attributes.push('xmlns="http://www.w3.org/1998/Math/MathML"');
+          attributes.push(`display="${display ? "block" : "inline"}"`);
+        }
+        const content = Array.from(node.childNodes || []).map(child => serialize(child)).join("");
+        return `<${tag}${attributes.length ? ` ${attributes.join(" ")}` : ""}>${content}</${tag}>`;
+      };
+      return serialize(root, true);
+    } catch (error) {
+      PTLogger.warn(`MathML 정제 실패: ${error.message}`);
+      return "";
+    }
   },
 
   // ── HTML attachment 저장 ──────────────────────────────────────────────────
@@ -656,6 +931,14 @@ ${sections.map(s => renderSection(s)).join("\n")}
       doneChunks,
       failedChunks,
       partialChunks,
+      layoutAnalysis: meta.layoutAnalysis || {
+        status: meta.layout ? "completed" : "disabled",
+        mode: meta.layout?.mode || null,
+        error: null,
+      },
+      layout: typeof PTLayoutAnalyzer !== "undefined"
+        ? PTLayoutAnalyzer.serializableLayout(meta.layout)
+        : null,
       chunks: jobs.map(j => ({
         chunkId: j.chunkId,
         sectionId: j.sectionId,
@@ -668,6 +951,17 @@ ${sections.map(s => renderSection(s)).join("\n")}
         // 번역 텍스트를 meta에 보존 — 세션 간 재개와 채팅 컨텍스트의 원천
         textHash: PTConstants.hashText(j.text),
         translation: j.status === "done" ? (j.translation || "") : "",
+        blocks: Array.isArray(j.blocks)
+          ? j.blocks.map(block => ({
+              id: block.id,
+              sourceBlockId: block.sourceBlockId || block.id,
+              partIndex: block.partIndex || 0,
+              totalParts: block.totalParts || 1,
+            }))
+          : null,
+        blockTranslations: j.status === "done" && j.blockTranslations
+          ? j.blockTranslations
+          : null,
         summary: j.summary || "",
       })),
     };

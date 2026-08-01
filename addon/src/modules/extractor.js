@@ -70,7 +70,9 @@ var PTExtractor = {
 
     // Zotero.PDFWorker API (Zotero 7+)
     if (Zotero.PDFWorker && typeof Zotero.PDFWorker.getFullText === "function") {
-      const result = await Zotero.PDFWorker.getFullText(attachment.id, true);
+      // Zotero 9 signature: getFullText(itemID, maxPages, isPriority, password).
+      // Passing `true` as the second argument limits extraction to one page.
+      const result = await Zotero.PDFWorker.getFullText(attachment.id, null, true);
       return (result && result.text) ? result.text : "";
     }
 

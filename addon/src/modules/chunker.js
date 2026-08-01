@@ -18,6 +18,104 @@ var PTChunker = {
     return jobs;
   },
 
+  // Page-aware layout blocks retain stable IDs through chunking. This avoids
+  // asking the model to reproduce opaque separators inside one long string.
+  buildLayoutJobs(sections, layout) {
+    const blockMap = PTLayoutAnalyzer.blockMap(layout);
+    const jobs = [];
+    this._processLayoutSections(sections, blockMap, jobs);
+    PTLogger.info(`구조화 청킹 완료: ${jobs.length}개 chunk`);
+    return jobs;
+  },
+
+  _processLayoutSections(sections, blockMap, jobs) {
+    const maxChars = this.MAX_CHUNK_TOKENS * PTTokenEstimate.CHARS_PER_TOKEN;
+    for (const section of sections || []) {
+      const expandedBlocks = [];
+      for (const blockId of section.blockIds || []) {
+        const block = blockMap.get(blockId);
+        if (!block?.text?.trim()) continue;
+        const parts = this._splitLongLayoutBlock(block.text, maxChars);
+        parts.forEach((text, partIndex) => {
+          expandedBlocks.push({
+            id: parts.length === 1 ? block.id : `${block.id}::part${partIndex + 1}`,
+            sourceBlockId: block.id,
+            text,
+            partIndex,
+            totalParts: parts.length,
+          });
+        });
+      }
+
+      const groups = [];
+      let current = [];
+      let currentLength = 0;
+      for (const block of expandedBlocks) {
+        const separatorLength = current.length ? 2 : 0;
+        if (current.length && currentLength + separatorLength + block.text.length > maxChars) {
+          groups.push(current);
+          current = [];
+          currentLength = 0;
+        }
+        current.push(block);
+        currentLength += (current.length > 1 ? 2 : 0) + block.text.length;
+      }
+      if (current.length) groups.push(current);
+
+      groups.forEach((blocks, chunkIndex) => {
+        const text = blocks.map(block => block.text).join("\n\n");
+        jobs.push({
+          chunkId: `${section.id}_c${chunkIndex}`,
+          sectionId: section.id,
+          heading: section.heading,
+          text,
+          blocks,
+          chunkIndex,
+          totalChunks: groups.length,
+          summaryContext: chunkIndex === groups.length - 1 && groups.length > 1
+            ? String(section.body || "").slice(0, this.MAX_SUMMARY_CONTEXT_CHARS)
+            : "",
+          translation: "",
+          blockTranslations: {},
+          summary: "",
+          status: "pending",
+          retries: 0,
+          error: null,
+        });
+      });
+
+      if (section.subsections?.length) {
+        this._processLayoutSections(section.subsections, blockMap, jobs);
+      }
+    }
+  },
+
+  _splitLongLayoutBlock(text, maxChars) {
+    const value = String(text || "").trim();
+    if (value.length <= maxChars) return [value];
+    const sentenceParts = this._splitBySentence(value, maxChars);
+    const parts = [];
+    for (const part of sentenceParts) {
+      if (part.length <= maxChars) {
+        parts.push(part.trim());
+        continue;
+      }
+      let offset = 0;
+      while (offset < part.length) {
+        let end = Math.min(part.length, offset + maxChars);
+        const tokenStart = part.lastIndexOf("[[PTMATH_", end);
+        const tokenEnd = tokenStart >= 0 ? part.indexOf("]]", tokenStart) : -1;
+        if (tokenStart >= offset && tokenEnd >= end) {
+          end = tokenStart > offset ? tokenStart : tokenEnd + 2;
+        }
+        if (end <= offset) end = Math.min(part.length, offset + maxChars);
+        parts.push(part.slice(offset, end).trim());
+        offset = end;
+      }
+    }
+    return parts.filter(Boolean);
+  },
+
   _processSection(sections, jobs) {
     for (const section of sections) {
       const body = section.body || "";
@@ -92,7 +190,7 @@ var PTChunker = {
   },
 
   _splitBySentence(text, maxChars) {
-    const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+    const sentences = text.match(/[^.!?]+(?:[.!?]+|$)/g) || [text];
     const chunks = [];
     let current = "";
     for (const s of sentences) {

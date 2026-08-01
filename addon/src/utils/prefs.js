@@ -8,6 +8,8 @@ var PTPrefs = {
     autoTranslate: false,
     summaryLines: 3,
     skipReferences: true,
+    layoutAwareTranslation: true,
+    parallelRequests: 6,
   },
 
   init() {
@@ -72,6 +74,11 @@ var PTPrefs = {
   getApiKey()     { return this.get("geminiApiKey") || ""; },
   isAutoTranslate()   { return this.get("autoTranslate") === true; },
   isSkipReferences()  { return this.get("skipReferences") !== false; },
+  isLayoutAwareTranslation() { return this.get("layoutAwareTranslation") !== false; },
+  getParallelRequests() {
+    const value = parseInt(this.get("parallelRequests") || 6, 10);
+    return Math.max(1, Math.min(14, Number.isFinite(value) ? value : 6));
+  },
   getSummaryLines()   { return parseInt(this.get("summaryLines") || 3, 10); },
 
   _hasZoteroPrefs() {

@@ -21,6 +21,8 @@ async function startup({ id, version, rootURI }) {
   // ── 모듈 로드 ─────────────────────────────────────────────────────────────
   Services.scriptloader.loadSubScript(rootURI + "src/modules/itemResolver.js");
   Services.scriptloader.loadSubScript(rootURI + "src/modules/extractor.js");
+  Services.scriptloader.loadSubScript(rootURI + "src/modules/pdfSplitter.js");
+  Services.scriptloader.loadSubScript(rootURI + "src/modules/layoutAnalyzer.js");
   Services.scriptloader.loadSubScript(rootURI + "src/modules/cleaner.js");
   Services.scriptloader.loadSubScript(rootURI + "src/modules/sectionizer.js");
   Services.scriptloader.loadSubScript(rootURI + "src/modules/chunker.js");
@@ -29,6 +31,7 @@ async function startup({ id, version, rootURI }) {
   Services.scriptloader.loadSubScript(rootURI + "src/modules/translator.js");
   Services.scriptloader.loadSubScript(rootURI + "src/modules/storage.js");
   Services.scriptloader.loadSubScript(rootURI + "src/modules/chat.js");
+  Services.scriptloader.loadSubScript(rootURI + "src/modules/responseRenderer.js");
   Services.scriptloader.loadSubScript(rootURI + "src/modules/readerSidebar.js");
 
   // ── 메인 클래스 로드 ──────────────────────────────────────────────────────
@@ -51,6 +54,9 @@ async function startup({ id, version, rootURI }) {
   try {
     if (typeof PaperFlowReaderSidebar !== "undefined") {
       PaperFlowReaderSidebar.install();
+      // Standalone panel windows use this bridge to receive PDF reader
+      // selections from the same listener as the native sidebar.
+      Zotero.PaperFlowReaderSidebar = PaperFlowReaderSidebar;
     }
   } catch (e) {
     log(`reader sidebar install failed: ${e.message}`);
@@ -64,8 +70,14 @@ function shutdown({ id, version, rootURI }, reason) {
     if (typeof PaperFlowReaderSidebar !== "undefined") {
       PaperFlowReaderSidebar.remove();
     }
+    Zotero.PaperFlowReaderSidebar = undefined;
   } catch (e) {
     try { Zotero.debug(`[PaperFlow] reader sidebar remove failed: ${e.message}`); } catch (_) {}
+  }
+  try {
+    if (typeof PTLayoutAnalyzer !== "undefined") PTLayoutAnalyzer.destroy();
+  } catch (e) {
+    try { Zotero.debug(`[PaperFlow] layout analyzer cleanup failed: ${e.message}`); } catch (_) {}
   }
   try {
     if (PaperTranslator) {
