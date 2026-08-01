@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "PaperFlow",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "PDF 논문 번역 + 요약 플러그인 (Gemini 3.1 Flash-Lite)",
   "author": "06-month",
   "icons": {

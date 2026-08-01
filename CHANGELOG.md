@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.5.1
+
+- Let the PDF split output folder be chosen in **Preferences → PaperFlow → PDF 분해 저장 위치**. It still defaults to the Zotero data directory, the picker rejects folders that are not writable, and a folder that becomes unavailable later (unplugged drive, revoked permission) falls back to the data directory with a warning instead of failing the translation. The folder actually used is already reported in the Meta view as *PDF split folder*.
+
 ## v0.5.0
 
 ### Layout-aware translation

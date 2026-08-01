@@ -80,6 +80,9 @@ var PTPrefs = {
     return Math.max(1, Math.min(14, Number.isFinite(value) ? value : 6));
   },
   getSummaryLines()   { return parseInt(this.get("summaryLines") || 3, 10); },
+  // 빈 문자열이면 Zotero 데이터 폴더를 쓴다는 뜻이다 (PTPdfSplit이 해석).
+  getPdfSplitDirectory() { return String(this.get("pdfSplitDirectory") || "").trim(); },
+  setPdfSplitDirectory(path) { this.set("pdfSplitDirectory", String(path || "").trim()); },
 
   _hasZoteroPrefs() {
     return typeof Zotero !== "undefined"

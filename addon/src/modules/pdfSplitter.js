@@ -22,10 +22,9 @@ var PTPdfSplit = {
   PERCEPTUAL_HASH_DISTANCE_THRESHOLD: 4,
 
   async begin(attachment, sourcePath, totalPages) {
-    const dataDir = this._dataDirectoryPath();
     const stem = this._sanitizeFilename(this._basename(sourcePath).replace(/\.pdf$/i, ""));
     const key = this._sanitizeFilename(String(attachment?.key || attachment?.id || "attachment"));
-    const rootBase = this._join(dataDir, this.ROOT_NAME);
+    const rootBase = await this._rootBasePath();
     const rootPath = this._join(rootBase, `${stem}-${key}`);
     const paths = {
       root: rootPath,
@@ -345,6 +344,25 @@ var PTPdfSplit = {
   async _exists(path) {
     if (typeof IOUtils !== "undefined" && typeof IOUtils.exists === "function") return IOUtils.exists(path);
     return false;
+  },
+
+  // 사용자가 설정에서 지정한 폴더가 있으면 그 아래에, 없으면 Zotero 데이터
+  // 폴더 아래에 PaperFlow_PdfSplit을 만든다. 지정 폴더를 쓸 수 없는 상황
+  // (외장 드라이브 분리, 권한 없음, 경로 오타)에서는 기본 위치로 되돌린다.
+  async _rootBasePath() {
+    const custom = typeof PTPrefs !== "undefined" && typeof PTPrefs.getPdfSplitDirectory === "function"
+      ? PTPrefs.getPdfSplitDirectory()
+      : "";
+    if (custom) {
+      const candidate = this._join(custom, this.ROOT_NAME);
+      try {
+        await this._makeDirectory(candidate);
+        return candidate;
+      } catch (error) {
+        PTLogger.warn(`지정한 PDF 분해 폴더를 쓸 수 없어 Zotero 데이터 폴더로 대체합니다 (${custom}): ${error.message}`);
+      }
+    }
+    return this._join(this._dataDirectoryPath(), this.ROOT_NAME);
   },
 
   _dataDirectoryPath() {
