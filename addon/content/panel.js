@@ -1540,3 +1540,18 @@ function PTPanelRelayout() {
 }
 window.addEventListener("load", PTPanelRelayout);
 window.addEventListener("resize", PTPanelRelayout);
+
+// 이 창은 browser window가 아니라 독립 XUL window라서 F11이 자동으로 처리되지 않는다.
+// Windows에서 전체화면이 안 된다는 보고가 있어 직접 토글한다.
+window.addEventListener("keydown", (event) => {
+  if (event.key === "F11" && !event.ctrlKey && !event.altKey && !event.metaKey) {
+    event.preventDefault();
+    try { window.fullScreen = !window.fullScreen; } catch (_) {}
+    return;
+  }
+  if (event.key === "Escape" && window.fullScreen) {
+    event.preventDefault();
+    event.stopPropagation();
+    try { window.fullScreen = false; } catch (_) {}
+  }
+});

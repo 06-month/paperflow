@@ -438,7 +438,9 @@ class PaperTranslatorAddon {
     const panelWin = win.openDialog(
       panelURL,
       `paper-translator-panel-${itemID}`,
-      "chrome,resizable,centerscreen,width=900,height=700",
+      // dialog=no 가 없으면 Windows에서 dialog frame으로 열려 최대화/전체화면 버튼이 없고
+      // 크기 조정도 막힌다. macOS는 dialog여도 zoom이 동작해서 증상이 드러나지 않는다.
+      "chrome,dialog=no,all,resizable=yes,minimizable=yes,centerscreen,width=900,height=700",
       {
         parentItemID: itemID,
         itemID,

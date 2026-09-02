@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.5.4
+
+- Raise the Zotero compatibility ceiling from `9.99.99` to `99.99.99`. Zotero 10 refused to load PaperFlow purely because of `strict_max_version`; no API change was needed. The bound is applied in `addon/manifest.json` and in every entry of `updates.json`.
+- Open the standalone PaperFlow panel with `dialog=no,all,resizable=yes,minimizable=yes`. Without `dialog=no` the window opens as a dialog frame on Windows, which has no maximize/full-screen button and cannot be resized; macOS hid the symptom because zoom works on dialogs there.
+- Handle F11 and Escape in the panel window directly. It is a standalone XUL window rather than a browser window, so F11 was never handled for it. Escape now only exits full screen while full screen is active.
+- Persist the panel window's position, size, and maximized state (`persist="screenX screenY width height sizemode"`).
+
 ## v0.5.3
 
 - Fix the Reader sidebar not picking up a finished translation. The sidebar only reloaded its data when the selected item changed, so after **Tools → Translate Paper** it kept showing the previous result — or "번역 결과가 없습니다" — until you clicked away and back. Saving a translation now tells every open sidebar and panel showing that paper to reload. Partial results saved on cancel or error refresh the same way.
